@@ -61,17 +61,21 @@ jobs:
             echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
           else
-            keytool -genkeypair -v \
-              -keystore my-upload-key.jks \
-              -storepass xynoosfinance2026 \
-              -alias upload \
-              -keypass xynoosfinance2026 \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=XynoosFinance,OU=Mobile,O=Xynoos Technology,L=Jakarta,ST=DKI Jakarta,C=ID"
-            echo "STORE_PASSWORD=xynoosfinance2026" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=xynoosfinance2026" >> $GITHUB_ENV
+            # Salin sertifikat dari debug.keystore (alias androiddebugkey -> upload)
+            # agar SHA-1 & SHA-256 pada Release APK sama persis dengan yang terdaftar di google-services.json
+            keytool -importkeystore \
+              -srckeystore debug.keystore \
+              -srcstorepass android \
+              -srckeypass android \
+              -srcalias androiddebugkey \
+              -destkeystore my-upload-key.jks \
+              -deststoretype PKCS12 \
+              -deststorepass android \
+              -destkeypass android \
+              -destalias upload \
+              -noprompt
+            echo "STORE_PASSWORD=android" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=android" >> $GITHUB_ENV
           fi
           echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
 
