@@ -77,6 +77,30 @@ Platform Android ini dibangun menggunakan standar rekayasa perangkat lunak moder
 
 ---
 
+## Unduh & Distribusi APK (GitHub Releases)
+
+Platform **XynoosFinance** oleh **Xynoos Technology** menyediakan dua cara mudah untuk mendapatkan dan menyebarluaskan file instalasi Android (**APK**) ke publik melalui **GitHub Releases**:
+
+### Cara 1: Unduh APK Langsung & Upload ke GitHub Releases (Paling Cepat & Direkomendasikan)
+1. **Unduh APK dari Editor**:
+   - Klik menu **Settings / Export (ikon di pojok kanan atas layar)** lalu pilih **Download APK** (atau **Generate APK / AAB**).
+2. **Push Kode ke GitHub**:
+   - Klik tombol **GitHub (Push to GitHub)** di pojok kanan atas untuk mengunggah seluruh kode sumber dan `README.md` ini ke repositori GitHub Anda.
+3. **Terbitkan di GitHub Releases Agar Bisa Disebarluaskan**:
+   - Buka repositori GitHub Anda di browser, lalu klik menu **Releases** (di kolom sebelah kanan) → klik **Create a new release** / **Draft a new release**.
+   - Ketik tag versi (misalnya `v1.0.0`) dan judul rilis **`XynoosFinance v1.0.0 — Official Android APK by Xynoos Technology`**.
+   - Seret (*drag & drop*) file **APK** yang sudah Anda unduh ke kotak **Attach binaries by dropping them here or selecting them**.
+   - Klik **Publish release**. Sekarang tautan rilis APK siap disebarluaskan ke siapa saja!
+
+### Cara 2: Otomatisasi Build APK via GitHub Actions (`scripts/release-apk.yml`)
+- File konfigurasi CI/CD otomatis telah disediakan di **`scripts/release-apk.yml`** (ditempatkan di folder `scripts/` agar proses *Push to GitHub* tidak tertolak oleh pembatasan izin *OAuth `workflows` scope* dari GitHub App).
+- Jika Anda ingin mengaktifkan pembuatan APK otomatis di server GitHub setiap kali ada pembaruan:
+  1. Setelah melakukan *Push to GitHub*, buka file **`scripts/release-apk.yml`** di web GitHub Anda.
+  2. Klik ikon pensil (**Edit this file**), lalu ubah nama jalur file menjadi **`.github/workflows/release-apk.yml`** dan klik **Commit changes**.
+  3. GitHub Actions akan otomatis membangun dan menerbitkan **`XynoosFinance-Release.apk`** ke halaman **Releases**.
+
+---
+
 ## Identitas Pengembang
 
 - **Pengembang Platform**: **Xynoos Technology**
