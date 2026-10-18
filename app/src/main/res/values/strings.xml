@@ -1,0 +1,12 @@
+<resources>
+    <string name="app_name">XynoosFinance</string>
+    <string name="tagline_brand">Understand your money. Control your future.</string>
+    <string name="nav_home">Beranda</string>
+    <string name="nav_transactions">Transaksi</string>
+    <string name="nav_goals_budgets">Target</string>
+    <string name="nav_ai_assistant">AI Finance</string>
+    <string name="nav_more">Menu</string>
+    <string name="action_continue_google">Continue with Google</string>
+    <string name="action_add_transaction">Catat Transaksi</string>
+    <string name="action_generate_pdf">Buat Laporan PDF</string>
+</resources>

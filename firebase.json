@@ -1,0 +1,25 @@
+{
+  "firestore": [
+    {
+      "database": "ai-studio-android-xynoosfi-329f3052-408e-42c0-82b7-5f1080c894ae",
+      "rules": "firestore.rules"
+    },
+    {
+      "database": "(default)",
+      "rules": "firestore.rules"
+    }
+  ],
+  "emulators": {
+    "firestore": {
+      "host": "127.0.0.1",
+      "port": 8085
+    },
+    "auth": {
+      "host": "127.0.0.1",
+      "port": 9099
+    },
+    "ui": {
+      "enabled": false
+    }
+  }
+}

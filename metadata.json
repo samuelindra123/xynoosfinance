@@ -1,0 +1,6 @@
+{
+  "name": "XynoosFinance",
+  "description": "Platform manajemen keuangan pribadi dan bisnis modern berbasis Android yang dibangun oleh Xynoos Technology.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

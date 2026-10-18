@@ -1,0 +1,196 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile and financial preferences stored per authenticated Google user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Owner Firebase Auth UID" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "email": { "type": "string", "description": "User email address" },
+        "currencyCode": { "type": "string", "enum": ["IDR", "USD", "SGD", "EUR"] },
+        "financialProfileType": { "type": "string", "enum": ["PERSONAL", "FREELANCE", "BUSINESS", "COMBINED"] },
+        "onboardingCompleted": { "type": "boolean" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "FieldValue.serverTimestamp()" }
+      },
+      "required": ["userId", "displayName", "currencyCode", "financialProfileType", "onboardingCompleted", "version", "createdAt", "updatedAt"]
+    },
+    "FinancialAccount": {
+      "title": "FinancialAccount",
+      "description": "Tracked financial account or wallet (Cash, Bank, E-Wallet, Savings, Business, Liability).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "accountType": { "type": "string", "enum": ["CASH", "BANK", "EWALLET", "SAVINGS", "BUSINESS", "ASSET", "LIABILITY"] },
+        "openingBalanceIdr": { "type": "integer" },
+        "currentBalanceIdr": { "type": "integer" },
+        "colorHex": { "type": "string" },
+        "institutionName": { "type": "string" },
+        "isArchived": { "type": "boolean" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "accountType", "openingBalanceIdr", "currentBalanceIdr", "colorHex", "isArchived", "version", "createdAt", "updatedAt"]
+    },
+    "Transaction": {
+      "title": "Transaction",
+      "description": "Financial ledger transaction in exact integer Rupiah (IDR).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["INCOME", "EXPENSE", "TRANSFER", "REFUND", "ADJUSTMENT"] },
+        "amountIdr": { "type": "integer" },
+        "currencyCode": { "type": "string" },
+        "title": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "accountId": { "type": "string" },
+        "accountName": { "type": "string" },
+        "toAccountId": { "type": "string" },
+        "toAccountName": { "type": "string" },
+        "transferGroupId": { "type": "string" },
+        "transactionDateMillis": { "type": "integer" },
+        "notes": { "type": "string" },
+        "merchantName": { "type": "string" },
+        "projectCostCenterId": { "type": "string" },
+        "isDeleted": { "type": "boolean" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "type", "amountIdr", "currencyCode", "title", "categoryId", "categoryName", "accountId", "accountName", "transactionDateMillis", "isDeleted", "version", "createdAt", "updatedAt"]
+    },
+    "TransactionCategory": {
+      "title": "TransactionCategory",
+      "description": "Income or expense category with vector icon identifier.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["INCOME", "EXPENSE"] },
+        "iconKey": { "type": "string" },
+        "colorHex": { "type": "string" },
+        "sortOrder": { "type": "integer" },
+        "isArchived": { "type": "boolean" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "type", "iconKey", "colorHex", "sortOrder", "isArchived", "version", "createdAt", "updatedAt"]
+    },
+    "Budget": {
+      "title": "Budget",
+      "description": "Monthly or custom-period spending budget (overall or category-specific).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "categoryId": { "type": "string" },
+        "categoryName": { "type": "string" },
+        "limitAmountIdr": { "type": "integer" },
+        "periodYearMonth": { "type": "string" },
+        "carryForward": { "type": "boolean" },
+        "alertThresholdPercent": { "type": "integer" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "categoryId", "categoryName", "limitAmountIdr", "periodYearMonth", "carryForward", "alertThresholdPercent", "version", "createdAt", "updatedAt"]
+    },
+    "FinancialGoal": {
+      "title": "FinancialGoal",
+      "description": "Savings target with explicit allocation rules.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "targetAmountIdr": { "type": "integer" },
+        "currentSavedIdr": { "type": "integer" },
+        "targetDateMillis": { "type": "integer" },
+        "priority": { "type": "string", "enum": ["HIGH", "MEDIUM", "LOW"] },
+        "iconKey": { "type": "string" },
+        "allocationRuleType": { "type": "string", "enum": ["MANUAL", "FIXED_PER_INCOME", "PERCENT_OF_INCOME"] },
+        "allocationValue": { "type": "integer" },
+        "linkedAccountId": { "type": "string" },
+        "isCompleted": { "type": "boolean" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "targetAmountIdr", "currentSavedIdr", "targetDateMillis", "priority", "iconKey", "allocationRuleType", "allocationValue", "isCompleted", "version", "createdAt", "updatedAt"]
+    },
+    "GoalContribution": {
+      "title": "GoalContribution",
+      "description": "Atomic contribution or withdrawal record for a FinancialGoal.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "goalId": { "type": "string" },
+        "amountIdr": { "type": "integer" },
+        "contributionType": { "type": "string", "enum": ["DEPOSIT", "WITHDRAWAL", "REVERSAL"] },
+        "notes": { "type": "string" },
+        "timestampMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "goalId", "amountIdr", "contributionType", "timestampMillis", "createdAt", "updatedAt"]
+    },
+    "InvoiceReference": {
+      "title": "InvoiceReference",
+      "description": "Business receivable or payable invoice tracking.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "counterpartyName": { "type": "string" },
+        "invoiceType": { "type": "string", "enum": ["RECEIVABLE", "PAYABLE"] },
+        "amountIdr": { "type": "integer" },
+        "dueDateMillis": { "type": "integer" },
+        "status": { "type": "string", "enum": ["UNPAID", "PARTIAL", "PAID", "CANCELLED"] },
+        "projectCostCenter": { "type": "string" },
+        "version": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "invoiceNumber", "counterpartyName", "invoiceType", "amountIdr", "dueDateMillis", "status", "version", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile document keyed by Firebase Auth UID."
+    },
+    "/users/{userId}/accounts/{accountId}": {
+      "schema": { "$ref": "#/entities/FinancialAccount" },
+      "description": "User financial accounts and wallets."
+    },
+    "/users/{userId}/transactions/{transactionId}": {
+      "schema": { "$ref": "#/entities/Transaction" },
+      "description": "User financial transactions ledger."
+    },
+    "/users/{userId}/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/TransactionCategory" },
+      "description": "User custom and default transaction categories."
+    },
+    "/users/{userId}/budgets/{budgetId}": {
+      "schema": { "$ref": "#/entities/Budget" },
+      "description": "User monthly and category budgets."
+    },
+    "/users/{userId}/goals/{goalId}": {
+      "schema": { "$ref": "#/entities/FinancialGoal" },
+      "description": "User savings goals and targets."
+    },
+    "/users/{userId}/goal_contributions/{contributionId}": {
+      "schema": { "$ref": "#/entities/GoalContribution" },
+      "description": "User savings goal contributions."
+    },
+    "/users/{userId}/invoices/{invoiceId}": {
+      "schema": { "$ref": "#/entities/InvoiceReference" },
+      "description": "Business receivables and payables."
+    }
+  }
+}

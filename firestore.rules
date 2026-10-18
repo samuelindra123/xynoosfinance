@@ -1,0 +1,348 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 4.1: Global Safety Net (Default-Deny Catch-All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Phase 3: Hardened Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // Validation Blueprints (Pillar 2)
+    function isValidUserProfile(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             (!('email' in data) || data.email == null || (data.email is string && data.email.size() <= 150)) &&
+             data.currencyCode is string && data.currencyCode in ['IDR', 'USD', 'SGD', 'EUR'] &&
+             data.financialProfileType is string && data.financialProfileType in ['PERSONAL', 'FREELANCE', 'BUSINESS', 'COMBINED'] &&
+             data.onboardingCompleted is bool &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidFinancialAccount(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.accountType is string && data.accountType in ['CASH', 'BANK', 'EWALLET', 'SAVINGS', 'BUSINESS', 'ASSET', 'LIABILITY'] &&
+             data.openingBalanceIdr is int && data.openingBalanceIdr >= -1000000000000000 && data.openingBalanceIdr <= 1000000000000000 &&
+             data.currentBalanceIdr is int && data.currentBalanceIdr >= -1000000000000000 && data.currentBalanceIdr <= 1000000000000000 &&
+             data.colorHex is string && data.colorHex.size() >= 4 && data.colorHex.size() <= 12 &&
+             (!('institutionName' in data) || data.institutionName == null || (data.institutionName is string && data.institutionName.size() <= 80)) &&
+             data.isArchived is bool &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidTransaction(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.type is string && data.type in ['INCOME', 'EXPENSE', 'TRANSFER', 'REFUND', 'ADJUSTMENT'] &&
+             data.amountIdr is int && data.amountIdr > 0 && data.amountIdr <= 1000000000000000 &&
+             data.currencyCode is string && data.currencyCode.size() >= 3 && data.currencyCode.size() <= 6 &&
+             data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+             data.categoryId is string && data.categoryId.size() >= 1 && data.categoryId.size() <= 128 &&
+             data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 80 &&
+             data.accountId is string && data.accountId.size() >= 1 && data.accountId.size() <= 128 &&
+             data.accountName is string && data.accountName.size() >= 1 && data.accountName.size() <= 80 &&
+             (!('toAccountId' in data) || data.toAccountId == null || (data.toAccountId is string && data.toAccountId.size() <= 128)) &&
+             (!('toAccountName' in data) || data.toAccountName == null || (data.toAccountName is string && data.toAccountName.size() <= 80)) &&
+             (!('transferGroupId' in data) || data.transferGroupId == null || (data.transferGroupId is string && data.transferGroupId.size() <= 128)) &&
+             data.transactionDateMillis is int && data.transactionDateMillis > 0 &&
+             (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 500)) &&
+             (!('merchantName' in data) || data.merchantName == null || (data.merchantName is string && data.merchantName.size() <= 120)) &&
+             (!('projectCostCenterId' in data) || data.projectCostCenterId == null || (data.projectCostCenterId is string && data.projectCostCenterId.size() <= 128)) &&
+             data.isDeleted is bool &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidCategory(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 60 &&
+             data.type is string && data.type in ['INCOME', 'EXPENSE'] &&
+             data.iconKey is string && data.iconKey.size() >= 1 && data.iconKey.size() <= 40 &&
+             data.colorHex is string && data.colorHex.size() >= 4 && data.colorHex.size() <= 12 &&
+             data.sortOrder is int && data.sortOrder >= 0 &&
+             data.isArchived is bool &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidBudget(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.categoryId is string && data.categoryId.size() >= 1 && data.categoryId.size() <= 128 &&
+             data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 80 &&
+             data.limitAmountIdr is int && data.limitAmountIdr > 0 && data.limitAmountIdr <= 1000000000000000 &&
+             data.periodYearMonth is string && data.periodYearMonth.size() >= 6 && data.periodYearMonth.size() <= 16 &&
+             data.carryForward is bool &&
+             data.alertThresholdPercent is int && data.alertThresholdPercent >= 1 && data.alertThresholdPercent <= 100 &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidGoal(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+             data.targetAmountIdr is int && data.targetAmountIdr > 0 && data.targetAmountIdr <= 1000000000000000 &&
+             data.currentSavedIdr is int && data.currentSavedIdr >= 0 && data.currentSavedIdr <= 1000000000000000 &&
+             data.targetDateMillis is int && data.targetDateMillis > 0 &&
+             data.priority is string && data.priority in ['HIGH', 'MEDIUM', 'LOW'] &&
+             data.iconKey is string && data.iconKey.size() >= 1 && data.iconKey.size() <= 40 &&
+             data.allocationRuleType is string && data.allocationRuleType in ['MANUAL', 'FIXED_PER_INCOME', 'PERCENT_OF_INCOME'] &&
+             data.allocationValue is int && data.allocationValue >= 0 &&
+             (!('linkedAccountId' in data) || data.linkedAccountId == null || (data.linkedAccountId is string && data.linkedAccountId.size() <= 128)) &&
+             data.isCompleted is bool &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidGoalContribution(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.goalId is string && data.goalId.size() >= 1 && data.goalId.size() <= 128 &&
+             data.amountIdr is int && data.amountIdr > 0 && data.amountIdr <= 1000000000000000 &&
+             data.contributionType is string && data.contributionType in ['DEPOSIT', 'WITHDRAWAL', 'REVERSAL'] &&
+             (!('notes' in data) || data.notes == null || (data.notes is string && data.notes.size() <= 300)) &&
+             data.timestampMillis is int && data.timestampMillis > 0 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidInvoice(data) {
+      return data.userId is string && data.userId == request.auth.uid && data.userId.size() <= 128 &&
+             data.invoiceNumber is string && data.invoiceNumber.size() >= 1 && data.invoiceNumber.size() <= 60 &&
+             data.counterpartyName is string && data.counterpartyName.size() >= 1 && data.counterpartyName.size() <= 100 &&
+             data.invoiceType is string && data.invoiceType in ['RECEIVABLE', 'PAYABLE'] &&
+             data.amountIdr is int && data.amountIdr > 0 && data.amountIdr <= 1000000000000000 &&
+             data.dueDateMillis is int && data.dueDateMillis > 0 &&
+             data.status is string && data.status in ['UNPAID', 'PARTIAL', 'PAID', 'CANCELLED'] &&
+             (!('projectCostCenter' in data) || data.projectCostCenter == null || (data.projectCostCenter is string && data.projectCostCenter.size() <= 80)) &&
+             data.version is int && data.version >= 1 &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // Collection 1: /users/{userId}
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       isValidId(userId) &&
+                       request.auth.uid == userId &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'currencyCode', 'financialProfileType', 'onboardingCompleted', 'version', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'currencyCode', 'financialProfileType', 'onboardingCompleted', 'version', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming());
+
+      allow update: if isSignedIn() &&
+                       isValidId(userId) &&
+                       isValidUserProfile(incoming()) &&
+                       request.auth.uid == userId &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'currencyCode', 'financialProfileType', 'onboardingCompleted', 'version', 'updatedAt']);
+
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+
+      // Subcollection 2: /users/{userId}/accounts/{accountId}
+      match /accounts/{accountId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(accountId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'name', 'accountType', 'openingBalanceIdr', 'currentBalanceIdr', 'colorHex', 'isArchived', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'accountType', 'openingBalanceIdr', 'currentBalanceIdr', 'colorHex', 'institutionName', 'isArchived', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidFinancialAccount(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(accountId) &&
+                         isValidFinancialAccount(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'accountType', 'openingBalanceIdr', 'currentBalanceIdr', 'colorHex', 'institutionName', 'isArchived', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 3: /users/{userId}/transactions/{transactionId}
+      match /transactions/{transactionId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(transactionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(transactionId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'type', 'amountIdr', 'currencyCode', 'title', 'categoryId', 'categoryName', 'accountId', 'accountName', 'transactionDateMillis', 'isDeleted', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'type', 'amountIdr', 'currencyCode', 'title', 'categoryId', 'categoryName', 'accountId', 'accountName', 'toAccountId', 'toAccountName', 'transferGroupId', 'transactionDateMillis', 'notes', 'merchantName', 'projectCostCenterId', 'isDeleted', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidTransaction(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(transactionId) &&
+                         isValidTransaction(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['type', 'amountIdr', 'currencyCode', 'title', 'categoryId', 'categoryName', 'accountId', 'accountName', 'toAccountId', 'toAccountName', 'transferGroupId', 'transactionDateMillis', 'notes', 'merchantName', 'projectCostCenterId', 'isDeleted', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(transactionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 4: /users/{userId}/categories/{categoryId}
+      match /categories/{categoryId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(categoryId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(categoryId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'name', 'type', 'iconKey', 'colorHex', 'sortOrder', 'isArchived', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'type', 'iconKey', 'colorHex', 'sortOrder', 'isArchived', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidCategory(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(categoryId) &&
+                         isValidCategory(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'type', 'iconKey', 'colorHex', 'sortOrder', 'isArchived', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(categoryId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 5: /users/{userId}/budgets/{budgetId}
+      match /budgets/{budgetId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(budgetId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'name', 'categoryId', 'categoryName', 'limitAmountIdr', 'periodYearMonth', 'carryForward', 'alertThresholdPercent', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'categoryId', 'categoryName', 'limitAmountIdr', 'periodYearMonth', 'carryForward', 'alertThresholdPercent', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidBudget(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(budgetId) &&
+                         isValidBudget(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'categoryId', 'categoryName', 'limitAmountIdr', 'periodYearMonth', 'carryForward', 'alertThresholdPercent', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 6: /users/{userId}/goals/{goalId}
+      match /goals/{goalId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(goalId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(goalId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'name', 'targetAmountIdr', 'currentSavedIdr', 'targetDateMillis', 'priority', 'iconKey', 'allocationRuleType', 'allocationValue', 'isCompleted', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'name', 'targetAmountIdr', 'currentSavedIdr', 'targetDateMillis', 'priority', 'iconKey', 'allocationRuleType', 'allocationValue', 'linkedAccountId', 'isCompleted', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidGoal(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(goalId) &&
+                         isValidGoal(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['name', 'targetAmountIdr', 'currentSavedIdr', 'targetDateMillis', 'priority', 'iconKey', 'allocationRuleType', 'allocationValue', 'linkedAccountId', 'isCompleted', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(goalId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 7: /users/{userId}/goal_contributions/{contributionId}
+      match /goal_contributions/{contributionId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(contributionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(contributionId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'goalId', 'amountIdr', 'contributionType', 'timestampMillis', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'goalId', 'amountIdr', 'contributionType', 'notes', 'timestampMillis', 'createdAt', 'updatedAt']) &&
+                         isValidGoalContribution(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(contributionId) &&
+                         isValidGoalContribution(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(contributionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+
+      // Subcollection 8: /users/{userId}/invoices/{invoiceId}
+      match /invoices/{invoiceId} {
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(invoiceId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(invoiceId) &&
+                         request.auth.uid == userId &&
+                         incoming().keys().hasAll(['userId', 'invoiceNumber', 'counterpartyName', 'invoiceType', 'amountIdr', 'dueDateMillis', 'status', 'version', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly(['userId', 'invoiceNumber', 'counterpartyName', 'invoiceType', 'amountIdr', 'dueDateMillis', 'status', 'projectCostCenter', 'version', 'createdAt', 'updatedAt']) &&
+                         isValidInvoice(incoming());
+
+        allow update: if isSignedIn() &&
+                         isValidId(userId) &&
+                         isValidId(invoiceId) &&
+                         isValidInvoice(incoming()) &&
+                         request.auth.uid == userId &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['invoiceNumber', 'counterpartyName', 'invoiceType', 'amountIdr', 'dueDateMillis', 'status', 'projectCostCenter', 'version', 'updatedAt']);
+
+        allow delete: if isSignedIn() && isValidId(userId) && isValidId(invoiceId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+      }
+    }
+  }
+}
