@@ -1,0 +1,137 @@
+name: Build & Release XynoosFinance APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Tag versi rilis (contoh: v1.0.0)"
+        required: false
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-apk:
+    name: Build & Publish APK by Xynoos Technology
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Prepare Keystores for Debug & Release Signing
+        run: |
+          if [ -f "debug.keystore.base64" ]; then
+            base64 -d debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          else
+            keytool -genkeypair -v \
+              -keystore my-upload-key.jks \
+              -storepass xynoosfinance2026 \
+              -alias upload \
+              -keypass xynoosfinance2026 \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=XynoosFinance,OU=Mobile,O=Xynoos Technology,L=Jakarta,ST=DKI Jakarta,C=ID"
+            echo "STORE_PASSWORD=xynoosfinance2026" >> $GITHUB_ENV
+            echo "KEY_PASSWORD=xynoosfinance2026" >> $GITHUB_ENV
+          fi
+          echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
+
+      - name: Ensure .env Exists for Secrets Plugin
+        run: |
+          if [ ! -f ".env" ]; then
+            cp .env.example .env
+          fi
+
+      - name: Build Release & Debug APKs
+        run: |
+          gradle assembleRelease assembleDebug --stacktrace
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk dist/XynoosFinance-Release.apk
+          cp app/build/outputs/apk/debug/app-debug.apk dist/XynoosFinance-Debug.apk
+
+      - name: Upload APK Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: XynoosFinance-APK-Bundle
+          path: |
+            dist/XynoosFinance-Release.apk
+            dist/XynoosFinance-Debug.apk
+
+      - name: Determine Release Tag
+        id: tag_step
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          elif [ -n "${{ github.event.inputs.release_tag }}" ]; then
+            TAG_NAME="${{ github.event.inputs.release_tag }}"
+          else
+            TAG_NAME="v1.0.${GITHUB_RUN_NUMBER}"
+          fi
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Publish APK to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag_step.outputs.tag_name }}
+          name: "XynoosFinance ${{ steps.tag_step.outputs.tag_name }} — Official Android APK (Xynoos Technology)"
+          body: |
+            ## XynoosFinance Android Platform (${{ steps.tag_step.outputs.tag_name }})
+            **Dikembangkan dan Dirilis oleh Xynoos Technology**
+
+            ### Unduh File Instalasi Android (APK)
+            Silakan unduh salah satu file APK di bawah ini untuk menginstal dan menyebarluaskan aplikasi **XynoosFinance**:
+            - **`XynoosFinance-Release.apk`** *(Direkomendasikan untuk distribusi publik & instalasi langsung)*
+            - **`XynoosFinance-Debug.apk`** *(Versi pengujian / debugging)*
+
+            ### Fitur Utama Rilis Ini:
+            - **Layar Hitung Nominal Saldo Real-Time (`XynoosCurrencyNominalInput`)**: Indikator skala nominal (`RIBUAN` s/d `TRILIUNAN`), ejaan Terbilang Bahasa Indonesia otomatis, kalkulator cepat, dan simulasi saldo rekening.
+            - **Terminal Pasar & Grafik Saham / Valuta Asing Real-Time (USD/IDR)**: Pembaruan kurs USD per 1 menit dengan grafik *Candlestick* OHLC profesional.
+            - **Target Tabungan Auto-Sync**: Terhubung langsung dengan Total Saldo Kekayaan Bersih secara otomatis.
+            - **Asisten Keuangan Interaktif**: Mode Tanya Jawab finansial dan Mode Pencatatan Otomatis bebas tertutup keyboard.
+            - **Ekspor Kartu Gambar Status Keuangan HD & Kirim ke WhatsApp Gratis**: Bagikan laporan status keuangan berlabel resmi **XynoosFinance**.
+          files: |
+            dist/XynoosFinance-Release.apk
+            dist/XynoosFinance-Debug.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
