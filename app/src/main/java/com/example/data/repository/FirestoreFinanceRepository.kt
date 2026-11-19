@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.content.Context
+import androidx.annotation.Keep
 import com.example.R
 import com.example.data.remote.OperationType
 import com.example.data.remote.handleFirestoreError
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
 
+@Keep
 @IgnoreExtraProperties
 data class FirestoreTransactionDoc(
     @DocumentId val id: String = "",

@@ -88,6 +88,7 @@ import com.example.ui.screens.XynoosSplashScreen
 import com.example.ui.theme.XynoosFinanceTheme
 import com.example.ui.viewmodel.XynoosViewModel
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CoroutineExceptionHandler
@@ -112,7 +113,7 @@ enum class PrimaryNavDestination(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        configureAppCheck(applicationContext, intent)
+        configureAppCheck(this, intent)
         runCatching { ReminderNotificationHelper.ensureChannelCreated(applicationContext) }
         enableEdgeToEdge()
 
@@ -140,6 +141,16 @@ fun XynoosRootApplication(
     forceAuthenticatedUserIdForTest: String? = null
 ) {
     val context = LocalContext.current
+    val appCtx = context.applicationContext ?: context
+    remember(forceAuthenticatedUserIdForTest) {
+        if (forceAuthenticatedUserIdForTest == null) {
+            runCatching {
+                if (FirebaseApp.getApps(appCtx).isEmpty()) {
+                    FirebaseApp.initializeApp(appCtx)
+                }
+            }
+        }
+    }
     var showSplash by rememberSaveable { mutableStateOf(forceAuthenticatedUserIdForTest == null) }
     var currentUserId by remember {
         mutableStateOf(forceAuthenticatedUserIdForTest ?: runCatching { Firebase.auth.currentUser?.uid }.getOrNull())
@@ -156,7 +167,12 @@ fun XynoosRootApplication(
             currentUserId = forceAuthenticatedUserIdForTest
             onDispose { }
         } else {
-            val authInstance = runCatching { Firebase.auth }.getOrNull()
+            val authInstance = runCatching {
+                if (FirebaseApp.getApps(appCtx).isEmpty()) {
+                    FirebaseApp.initializeApp(appCtx)
+                }
+                Firebase.auth
+            }.getOrNull()
             val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
                 currentUserId = firebaseAuth.currentUser?.uid
                 currentUserEmail = firebaseAuth.currentUser?.email

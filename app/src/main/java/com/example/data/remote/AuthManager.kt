@@ -8,11 +8,14 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.FirebaseOptions
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
@@ -27,12 +30,39 @@ import kotlinx.coroutines.tasks.await
 
 private const val TAG = "XynoosAuth"
 
-private fun getDefaultWebClientId(context: Context): String? {
-    val resourceId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
-    if (resourceId == 0) return null
+private fun ensureFirebaseAuth(context: Context): Result<FirebaseAuth> {
+    val appCtx = context.applicationContext ?: context
     return try {
-        context.getString(resourceId)
-    } catch (_: Exception) {
+        if (FirebaseApp.getApps(appCtx).isEmpty()) {
+            val options = FirebaseOptions.fromResource(appCtx)
+            if (options == null) {
+                return Result.failure(
+                    IllegalStateException(
+                        "Konfigurasi Firebase (google_app_id / google-services.json) tidak ditemukan di APK ini. " +
+                            "Pastikan app/google-services.json ikut ter-commit ke repositori sebelum build APK."
+                    )
+                )
+            }
+            val initialized = FirebaseApp.initializeApp(appCtx, options)
+                ?: FirebaseApp.initializeApp(appCtx)
+            if (initialized == null && FirebaseApp.getApps(appCtx).isEmpty()) {
+                return Result.failure(
+                    IllegalStateException("Inisialisasi FirebaseApp gagal pada proses aplikasi.")
+                )
+            }
+        }
+        Result.success(Firebase.auth)
+    } catch (t: Throwable) {
+        Log.e(TAG, "FirebaseAuth initialization failed", t)
+        Result.failure(t)
+    }
+}
+
+private fun getDefaultWebClientId(context: Context): String? {
+    return try {
+        context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+    } catch (t: Throwable) {
+        Log.w(TAG, "default_web_client_id tidak tersedia: ${t.message}")
         null
     }
 }
@@ -55,7 +85,7 @@ fun attemptAutoSignIn(
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    val firebaseAuth = runCatching { Firebase.auth }.getOrNull()
+    val firebaseAuth = ensureFirebaseAuth(context).getOrNull()
     if (firebaseAuth?.currentUser != null) {
         onAuthSuccess()
         return
@@ -114,12 +144,14 @@ fun onGoogleSignInClicked(
         onAuthError("Layanan Google Credential Manager tidak tersedia di perangkat ini.")
         return
     }
-    val firebaseAuth = runCatching { Firebase.auth }.getOrNull() ?: run {
-        onAuthError("Layanan autentikasi Firebase belum siap.")
+    val authResult = ensureFirebaseAuth(context)
+    val firebaseAuth = authResult.getOrElse { err ->
+        val detail = err.localizedMessage?.takeIf { it.isNotBlank() } ?: err::class.java.simpleName
+        onAuthError("Layanan autentikasi Firebase belum siap: $detail")
         return
     }
     val clientId = getDefaultWebClientId(context) ?: run {
-        onAuthError("Konfigurasi Google Sign-In belum ditemukan (default_web_client_id).")
+        onAuthError("Konfigurasi Google Sign-In belum ditemukan (default_web_client_id). Pastikan app/google-services.json terpasang saat build.")
         return
     }
 
