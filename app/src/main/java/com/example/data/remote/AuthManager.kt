@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -60,7 +59,16 @@ private fun ensureFirebaseAuth(context: Context): Result<FirebaseAuth> {
 
 private fun getDefaultWebClientId(context: Context): String? {
     return try {
-        context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
+        val resourceId = context.resources.getIdentifier(
+            "default_web_client_id",
+            "string",
+            context.packageName
+        )
+        if (resourceId == 0) {
+            null
+        } else {
+            context.getString(resourceId).takeIf { it.isNotBlank() }
+        }
     } catch (t: Throwable) {
         Log.w(TAG, "default_web_client_id tidak tersedia: ${t.message}")
         null
