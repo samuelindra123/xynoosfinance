@@ -92,12 +92,13 @@ Platform **XynoosFinance** oleh **Xynoos Technology** menyediakan dua cara mudah
    - Seret (*drag & drop*) file **APK** yang sudah Anda unduh ke kotak **Attach binaries by dropping them here or selecting them**.
    - Klik **Publish release**. Sekarang tautan rilis APK siap disebarluaskan ke siapa saja!
 
-### Cara 2: Otomatisasi Build APK via GitHub Actions (`scripts/release-apk.yml`)
-- File konfigurasi CI/CD otomatis telah disediakan di **`scripts/release-apk.yml`** (ditempatkan di folder `scripts/` agar proses *Push to GitHub* tidak tertolak oleh pembatasan izin *OAuth `workflows` scope* dari GitHub App).
-- Jika Anda ingin mengaktifkan pembuatan APK otomatis di server GitHub setiap kali ada pembaruan:
-  1. Setelah melakukan *Push to GitHub*, buka file **`scripts/release-apk.yml`** di web GitHub Anda.
-  2. Klik ikon pensil (**Edit this file**), lalu ubah nama jalur file menjadi **`.github/workflows/release-apk.yml`** dan klik **Commit changes**.
-  3. GitHub Actions akan otomatis membangun dan menerbitkan **`XynoosFinance-Release.apk`** ke halaman **Releases**.
+### Cara 2: Jalankan Manual via GitHub Actions (`Run workflow`)
+- File workflow rilis **v2.0.0** terbaru ditempatkan di **`scripts/release-apk.yml`** agar proses **Push to GitHub** dari editor tidak tertolak oleh pembatasan izin `workflows` pada GitHub App.
+- Cara mengaktifkan dan menjalankan rilis APK versi terbaru di GitHub:
+  1. Lakukan **Push to GitHub** seperti biasa.
+  2. Buka file **`scripts/release-apk.yml`** langsung di web GitHub Anda → klik ikon pensil (**Edit this file**) → ubah jalur namanya menjadi **`.github/workflows/release-apk.yml`** → klik **Commit changes**. *(Langkah ini hanya perlu dilakukan sekali).*
+  3. Buka tab **Actions** → pilih workflow **Release XynoosFinance APK (Manual & Tag)** → klik **Run workflow** (biarkan tag kosong untuk otomatis `v2.0.<run_number>`, atau isi tag custom) → klik **Run workflow**.
+  4. Setelah selesai, unduh **`XynoosFinance-v2.0.x-Release.apk`** dari menu **Releases** atau bagian **Artifacts**.
 
 ---
 

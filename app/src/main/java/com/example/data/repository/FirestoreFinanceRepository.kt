@@ -335,6 +335,77 @@ class FirestoreFinanceRepository(
         }
     }
 
+    suspend fun syncCategory(category: com.example.domain.TransactionCategoryModel): Result<String> {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
+        val docRef = db.collection("users").document(uid).collection("categories").document(category.id)
+        return try {
+            val existing = docRef.get().await()
+            val createdField = if (existing.exists() && existing.getTimestamp("createdAt") != null) {
+                existing.getTimestamp("createdAt")!!
+            } else {
+                FieldValue.serverTimestamp()
+            }
+            val typeStr = if (category.type == TransactionType.INCOME) "INCOME" else "EXPENSE"
+            val payload = mapOf<String, Any>(
+                "userId" to uid,
+                "name" to category.name.take(60).ifBlank { "Kategori" },
+                "type" to typeStr,
+                "iconKey" to category.iconKey.take(40).ifBlank { "category" },
+                "colorHex" to category.colorHex.take(12).ifBlank { "#49E0A0" },
+                "sortOrder" to category.sortOrder.coerceAtLeast(0),
+                "isArchived" to category.isArchived,
+                "version" to 1,
+                "createdAt" to createdField,
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
+            Result.success(category.id)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, docRef.path)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun fetchCategories(): List<com.example.domain.TransactionCategoryModel> {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val path = "users/$uid/categories"
+        return try {
+            val snap = db.collection("users").document(uid).collection("categories")
+                .whereEqualTo("userId", uid)
+                .get()
+                .await()
+            snap.documents.mapNotNull { doc ->
+                val name = doc.getString("name") ?: return@mapNotNull null
+                val typeStr = doc.getString("type") ?: "EXPENSE"
+                com.example.domain.TransactionCategoryModel(
+                    id = doc.id,
+                    userId = uid,
+                    name = name,
+                    type = runCatching { TransactionType.valueOf(typeStr) }.getOrDefault(TransactionType.EXPENSE),
+                    iconKey = doc.getString("iconKey") ?: "category",
+                    colorHex = doc.getString("colorHex") ?: "#49E0A0",
+                    sortOrder = (doc.getLong("sortOrder") ?: 0L).toInt(),
+                    isArchived = doc.getBoolean("isArchived") ?: false
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, path)
+            emptyList()
+        }
+    }
+
     suspend fun syncBudget(budget: BudgetModel): Result<String> {
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("budgets").document(budget.id)
@@ -365,6 +436,43 @@ class FirestoreFinanceRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
             Result.failure(e)
+        }
+    }
+
+    suspend fun fetchBudgets(): List<BudgetModel> {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val path = "users/$uid/budgets"
+        return try {
+            val snap = db.collection("users").document(uid).collection("budgets")
+                .whereEqualTo("userId", uid)
+                .get()
+                .await()
+            snap.documents.mapNotNull { doc ->
+                val name = doc.getString("name") ?: return@mapNotNull null
+                val limit = doc.getLong("limitAmountIdr") ?: return@mapNotNull null
+                BudgetModel(
+                    id = doc.id,
+                    userId = uid,
+                    name = name,
+                    categoryId = doc.getString("categoryId") ?: "ALL",
+                    categoryName = doc.getString("categoryName") ?: "Semua Kategori",
+                    limitAmountIdr = limit,
+                    periodYearMonth = doc.getString("periodYearMonth") ?: "",
+                    carryForward = doc.getBoolean("carryForward") ?: false,
+                    alertThresholdPercent = (doc.getLong("alertThresholdPercent") ?: 80L).toInt(),
+                    syncStatus = SyncStatus.SYNCED,
+                    version = (doc.getLong("version") ?: 1L).toInt()
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, path)
+            emptyList()
         }
     }
 
@@ -404,6 +512,46 @@ class FirestoreFinanceRepository(
         }
     }
 
+    suspend fun fetchGoals(): List<FinancialGoalModel> {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val path = "users/$uid/goals"
+        return try {
+            val snap = db.collection("users").document(uid).collection("goals")
+                .whereEqualTo("userId", uid)
+                .get()
+                .await()
+            snap.documents.mapNotNull { doc ->
+                val name = doc.getString("name") ?: return@mapNotNull null
+                val target = doc.getLong("targetAmountIdr") ?: return@mapNotNull null
+                FinancialGoalModel(
+                    id = doc.id,
+                    userId = uid,
+                    name = name,
+                    targetAmountIdr = target,
+                    currentSavedIdr = doc.getLong("currentSavedIdr") ?: 0L,
+                    targetDateMillis = doc.getLong("targetDateMillis") ?: System.currentTimeMillis(),
+                    priority = runCatching { GoalPriority.valueOf(doc.getString("priority") ?: "MEDIUM") }.getOrDefault(GoalPriority.MEDIUM),
+                    iconKey = doc.getString("iconKey") ?: "trending_up",
+                    allocationRuleType = runCatching { AllocationRuleType.valueOf(doc.getString("allocationRuleType") ?: "MANUAL") }.getOrDefault(AllocationRuleType.MANUAL),
+                    allocationValue = doc.getLong("allocationValue") ?: 0L,
+                    linkedAccountId = doc.getString("linkedAccountId"),
+                    isCompleted = doc.getBoolean("isCompleted") ?: false,
+                    syncStatus = SyncStatus.SYNCED,
+                    version = (doc.getLong("version") ?: 1L).toInt()
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, path)
+            emptyList()
+        }
+    }
+
     suspend fun syncInvoice(invoice: InvoiceReferenceModel): Result<String> {
         val uid = requireUserId()
         val docRef = db.collection("users").document(uid).collection("invoices").document(invoice.id)
@@ -434,6 +582,44 @@ class FirestoreFinanceRepository(
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.WRITE, docRef.path)
             Result.failure(e)
+        }
+    }
+
+    suspend fun fetchInvoices(): List<InvoiceReferenceModel> {
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val path = "users/$uid/invoices"
+        return try {
+            val snap = db.collection("users").document(uid).collection("invoices")
+                .whereEqualTo("userId", uid)
+                .get()
+                .await()
+            snap.documents.mapNotNull { doc ->
+                val invNumber = doc.getString("invoiceNumber") ?: return@mapNotNull null
+                val counterparty = doc.getString("counterpartyName") ?: return@mapNotNull null
+                val amount = doc.getLong("amountIdr") ?: return@mapNotNull null
+                InvoiceReferenceModel(
+                    id = doc.id,
+                    userId = uid,
+                    invoiceNumber = invNumber,
+                    counterpartyName = counterparty,
+                    invoiceType = runCatching { InvoiceType.valueOf(doc.getString("invoiceType") ?: "RECEIVABLE") }.getOrDefault(InvoiceType.RECEIVABLE),
+                    amountIdr = amount,
+                    dueDateMillis = doc.getLong("dueDateMillis") ?: System.currentTimeMillis(),
+                    status = runCatching { InvoiceStatus.valueOf(doc.getString("status") ?: "UNPAID") }.getOrDefault(InvoiceStatus.UNPAID),
+                    projectCostCenter = doc.getString("projectCostCenter").orEmpty(),
+                    syncStatus = SyncStatus.SYNCED,
+                    version = (doc.getLong("version") ?: 1L).toInt()
+                )
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.LIST, path)
+            emptyList()
         }
     }
 

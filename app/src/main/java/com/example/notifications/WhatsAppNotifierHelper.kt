@@ -4,15 +4,20 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import com.example.data.remote.LiveUsdMarketState
+import com.example.domain.AnnualLedgerSummary
+import com.example.domain.BudgetProgressSummary
+import com.example.domain.CategoryBreakdownItem
+import com.example.domain.FinancialAccountModel
 import com.example.domain.FinancialOverviewSummary
 import com.example.domain.IdrFormatter
 import com.example.domain.TransactionModel
+import com.example.domain.TransactionType
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 /**
- * Provides 100% free WhatsApp notification & financial summary dispatch directly to
+ * Provides 100% free WhatsApp notification & detailed financial summary dispatch directly to
  * the user's phone number with official XynoosFinance branding.
  */
 object WhatsAppNotifierHelper {
@@ -32,9 +37,16 @@ object WhatsAppNotifierHelper {
         overview: FinancialOverviewSummary,
         usdMarket: LiveUsdMarketState,
         latestTransaction: TransactionModel? = null,
-        isPrivacyMode: Boolean = false
+        isPrivacyMode: Boolean = false,
+        periodLabel: String = "Bulan Ini",
+        accounts: List<FinancialAccountModel> = emptyList(),
+        categoryBreakdown: List<CategoryBreakdownItem> = emptyList(),
+        budgetSummaries: List<BudgetProgressSummary> = emptyList(),
+        annualSummary: AnnualLedgerSummary? = null,
+        recentTransactions: List<TransactionModel> = emptyList()
     ): String {
         val fullDateFormat = SimpleDateFormat("EEEE, dd MMMM yyyy • HH:mm:ss 'WIB' ('Tahun' yyyy)", Locale("id", "ID"))
+        val shortTxDateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("id", "ID"))
         val nowFormatted = fullDateFormat.format(Date())
         val cashIdr = IdrFormatter.format(overview.availableCashIdr, isPrivacyMode)
         val cashUsd = IdrFormatter.formatUsdFromIdr(overview.availableCashIdr, usdMarket.currentRateIdr, isPrivacyMode)
@@ -43,10 +55,11 @@ object WhatsAppNotifierHelper {
         val usdRateStr = IdrFormatter.format(usdMarket.currentRateIdr.toLong())
 
         return buildString {
-            appendLine("*XYNOOSFINANCE — NOTIFIKASI KEUANGAN RESMI*")
-            appendLine("📅 *Waktu:* $nowFormatted")
+            appendLine("*XYNOOSFINANCE — LAPORAN KEUANGAN RINCI*")
+            appendLine("📅 *Waktu Cetak:* $nowFormatted")
             appendLine("👤 *Pemilik Akun:* ${displayName.ifBlank { "Eksekutif Xynoos" }}")
             appendLine("────────────────────────")
+
             if (latestTransaction != null) {
                 val txDate = fullDateFormat.format(Date(latestTransaction.transactionDateMillis))
                 appendLine("🔔 *Transaksi Terbaru Tercatat:*")
@@ -54,18 +67,69 @@ object WhatsAppNotifierHelper {
                 appendLine("• Tipe: ${latestTransaction.type.labelId} (${latestTransaction.categoryName})")
                 appendLine("• Nominal: *${IdrFormatter.format(latestTransaction.amountIdr, isPrivacyMode)}*")
                 appendLine("• Rekening: ${latestTransaction.accountName}")
-                appendLine("• Waktu Transaksi: $txDate")
+                appendLine("• Waktu: $txDate")
                 appendLine("────────────────────────")
             }
+
             appendLine("💰 *Total Kas Tersedia:* $cashIdr _(≈ $cashUsd)_")
             appendLine("📈 *Kekayaan Bersih:* $netWorthIdr _(≈ $netWorthUsd)_")
             appendLine("💵 *Kurs Live USD/IDR (1m):* $usdRateStr / $1 USD")
-            appendLine("📊 *Arus Kas Periode Ini:*")
-            appendLine("• Pemasukan: ${IdrFormatter.format(overview.periodIncomeIdr, isPrivacyMode)}")
-            appendLine("• Pengeluaran: ${IdrFormatter.format(overview.periodExpenseIdr, isPrivacyMode)}")
-            appendLine("🎯 *Progres Target Tabungan (Otomatis):* ${overview.savingsProgressPercent}%")
             appendLine("────────────────────────")
-            append("_Pesan otomatis gratis dari aplikasi XynoosFinance Android_")
+
+            appendLine("📊 *Rincian Arus Kas ($periodLabel):*")
+            appendLine("• Pemasukan: ${IdrFormatter.format(overview.periodIncomeIdr, isPrivacyMode, showPlusSign = true)}")
+            appendLine("• Pengeluaran Bersih: ${IdrFormatter.format(overview.periodExpenseIdr, isPrivacyMode)}")
+            appendLine("• Arus Kas Bersih: ${IdrFormatter.format(overview.netCashFlowIdr, isPrivacyMode, showPlusSign = true)}")
+
+            if (annualSummary != null) {
+                appendLine("────────────────────────")
+                appendLine("📆 *Rekap Tahunan (${annualSummary.year} — ${annualSummary.transactionCount} Transaksi):*")
+                appendLine("• Total Masuk Tahun ${annualSummary.year}: ${IdrFormatter.format(annualSummary.totalIncomeIdr, isPrivacyMode, showPlusSign = true)}")
+                appendLine("• Total Keluar/Abis Tahun ${annualSummary.year}: ${IdrFormatter.format(annualSummary.totalNetExpenseIdr, isPrivacyMode)}")
+                appendLine("• Surplus/Defisit Tahunan: ${IdrFormatter.format(annualSummary.netCashFlowIdr, isPrivacyMode, showPlusSign = true)}")
+            }
+
+            if (accounts.isNotEmpty()) {
+                appendLine("────────────────────────")
+                appendLine("🏦 *Rincian Saldo Rekening (${accounts.size} Akun):*")
+                accounts.take(5).forEach { acc ->
+                    appendLine("• ${acc.name} (${acc.accountType.labelId}): ${IdrFormatter.format(acc.currentBalanceIdr, isPrivacyMode)}")
+                }
+            }
+
+            if (categoryBreakdown.isNotEmpty()) {
+                appendLine("────────────────────────")
+                appendLine("🏷️ *Rincian Pengeluaran Terbesar per Kategori:*")
+                categoryBreakdown.take(5).forEach { cat ->
+                    appendLine("• ${cat.categoryName}: ${IdrFormatter.format(cat.amountIdr, isPrivacyMode)} (${String.format(Locale.US, "%.1f", cat.percentage)}% • ${cat.transactionCount}x)")
+                }
+            }
+
+            if (budgetSummaries.isNotEmpty()) {
+                appendLine("────────────────────────")
+                appendLine("🛡️ *Status Anggaran Berjalan:*")
+                budgetSummaries.take(4).forEach { b ->
+                    appendLine("• ${b.budget.name}: ${IdrFormatter.format(b.spentAmountIdr, isPrivacyMode)} / ${IdrFormatter.format(b.budget.limitAmountIdr, isPrivacyMode)} (${b.utilizationPercent}%)")
+                }
+            }
+
+            val ledgerPreview = recentTransactions.take(5)
+            if (ledgerPreview.isNotEmpty()) {
+                appendLine("────────────────────────")
+                appendLine("🧾 *Rincian ${ledgerPreview.size} Transaksi Terbaru:*")
+                ledgerPreview.forEach { tx ->
+                    val sign = when (tx.type) {
+                        TransactionType.INCOME, TransactionType.REFUND -> "+"
+                        TransactionType.EXPENSE -> "-"
+                        else -> ""
+                    }
+                    appendLine("• [${shortTxDateFormat.format(Date(tx.transactionDateMillis))}] ${tx.title} (${tx.categoryName}): $sign${IdrFormatter.format(tx.amountIdr, isPrivacyMode)}")
+                }
+            }
+
+            appendLine("────────────────────────")
+            appendLine("🎯 *Progres Target Tabungan (Auto-Saldo):* ${overview.savingsProgressPercent}%")
+            append("_Laporan rinci otomatis gratis dari aplikasi XynoosFinance by Xynoos Technology_")
         }
     }
 

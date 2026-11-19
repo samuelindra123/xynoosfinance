@@ -14,6 +14,9 @@ import android.graphics.Typeface
 import androidx.core.content.FileProvider
 import com.example.data.local.UserPreferencesState
 import com.example.data.remote.LiveUsdMarketState
+import com.example.domain.AnnualLedgerSummary
+import com.example.domain.CategoryBreakdownItem
+import com.example.domain.FinancialAccountModel
 import com.example.domain.FinancialGoalModel
 import com.example.domain.FinancialOverviewSummary
 import com.example.domain.IdrFormatter
@@ -33,13 +36,14 @@ data class GeneratedStatusImageInfo(
 )
 
 /**
- * Generates a high-resolution (1080x1620) luxury fintech Status Card PNG image
+ * Generates a high-resolution (1080x1920) luxury fintech Detailed Status Card PNG image
  * suitable for WhatsApp Status, Instagram Story, Telegram, or executive sharing.
+ * Includes detailed category breakdown, annual summary, account snapshot, and USD 1m chart.
  */
 object StatusImageExporter {
 
     private const val WIDTH = 1080
-    private const val HEIGHT = 1620
+    private const val HEIGHT = 1920
 
     fun generateStatusImagePng(
         context: Context,
@@ -47,7 +51,10 @@ object StatusImageExporter {
         overview: FinancialOverviewSummary,
         usdMarket: LiveUsdMarketState,
         goals: List<FinancialGoalModel>,
-        periodLabel: String
+        periodLabel: String,
+        categoryBreakdown: List<CategoryBreakdownItem> = emptyList(),
+        accounts: List<FinancialAccountModel> = emptyList(),
+        annualSummary: AnnualLedgerSummary? = null
     ): Result<GeneratedStatusImageInfo> {
         return try {
             val bitmap = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888)
@@ -84,9 +91,9 @@ object StatusImageExporter {
             }
 
             // 2. Outer Card Frame
-            val cardRect = RectF(56f, 64f, WIDTH - 56f, HEIGHT - 64f)
+            val cardRect = RectF(52f, 56f, WIDTH - 52f, HEIGHT - 56f)
             val cardBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(230, 16, 21, 29)
+                color = Color.argb(232, 16, 21, 29)
                 style = Paint.Style.FILL
             }
             val cardBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -100,7 +107,7 @@ object StatusImageExporter {
             // Typography Paints
             val brandPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(73, 224, 160)
-                textSize = 28f
+                textSize = 27f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
             }
             val subHeaderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -110,38 +117,48 @@ object StatusImageExporter {
             }
             val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(152, 163, 179)
-                textSize = 24f
+                textSize = 22f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+            }
+            val bodyRowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(225, 232, 242)
+                textSize = 24f
+                typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
             }
             val heroAmountPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(243, 246, 250)
-                textSize = 68f
+                textSize = 64f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
             val usdBadgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(114, 167, 255)
-                textSize = 36f
+                textSize = 32f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
             val metricValuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(243, 246, 250)
-                textSize = 36f
+                textSize = 32f
+                typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
+            }
+            val smallMonoPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(243, 246, 250)
+                textSize = 24f
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
             }
 
-            var y = 140f
+            var y = 126f
 
             // 3. Brand Header & Full Year Timestamp
-            canvas.drawText("XYNOOSFINANCE • EXECUTIVE WEALTH STATUS", 104f, y, brandPaint)
-            y += 40f
+            canvas.drawText("XYNOOSFINANCE • LAPORAN STATUS KEUANGAN RINCI", 96f, y, brandPaint)
+            y += 38f
             val ownerName = prefs.displayName.ifBlank { "Eksekutif Xynoos" }
-            canvas.drawText("$ownerName  •  ${prefs.reportOrgName}", 104f, y, subHeaderPaint)
-            y += 34f
-            canvas.drawText("Waktu Cetak: $timestampStr", 104f, y, subHeaderPaint)
-            y += 56f
+            canvas.drawText("$ownerName  •  ${prefs.reportOrgName}  •  Periode: $periodLabel", 96f, y, subHeaderPaint)
+            y += 32f
+            canvas.drawText("Waktu Cetak: $timestampStr", 96f, y, subHeaderPaint)
+            y += 44f
 
             // 4. Hero Net Worth Box (IDR + Real-Time USD)
-            val heroRect = RectF(96f, y, WIDTH - 96f, y + 310f)
+            val heroRect = RectF(92f, y, WIDTH - 92f, y + 276f)
             val heroBoxPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 shader = LinearGradient(
                     heroRect.left, heroRect.top, heroRect.right, heroRect.bottom,
@@ -150,11 +167,11 @@ object StatusImageExporter {
                     Shader.TileMode.CLAMP
                 )
             }
-            canvas.drawRoundRect(heroRect, 36f, 36f, heroBoxPaint)
+            canvas.drawRoundRect(heroRect, 34f, 34f, heroBoxPaint)
 
-            canvas.drawText("TOTAL KEKAYAAN BERSIH (NET WORTH)", 132f, y + 62f, labelPaint)
+            canvas.drawText("TOTAL KEKAYAAN BERSIH (NET WORTH)", 126f, y + 54f, labelPaint)
             val netWorthStr = IdrFormatter.format(overview.netWorthIdr, isPrivacy)
-            canvas.drawText(netWorthStr, 132f, y + 148f, heroAmountPaint)
+            canvas.drawText(netWorthStr, 126f, y + 132f, heroAmountPaint)
 
             val netWorthUsdStr = IdrFormatter.formatUsdFromIdr(
                 amountIdr = overview.netWorthIdr,
@@ -162,7 +179,7 @@ object StatusImageExporter {
                 isPrivacyHidden = isPrivacy
             )
             val rateFormatted = IdrFormatter.format(usdMarket.currentRateIdr.toLong())
-            canvas.drawText("≈ $netWorthUsdStr  (Kurs Spot: $rateFormatted / $1 USD)", 132f, y + 214f, usdBadgePaint)
+            canvas.drawText("≈ $netWorthUsdStr  (Spot 1m: $rateFormatted / $1 USD)", 126f, y + 190f, usdBadgePaint)
 
             val cashUsdStr = IdrFormatter.formatUsdFromIdr(
                 amountIdr = overview.availableCashIdr,
@@ -170,30 +187,30 @@ object StatusImageExporter {
                 isPrivacyHidden = isPrivacy
             )
             canvas.drawText(
-                "Kas Likuid Tersedia: ${IdrFormatter.format(overview.availableCashIdr, isPrivacy)} ($cashUsdStr)",
-                132f,
-                y + 268f,
+                "Kas Likuid: ${IdrFormatter.format(overview.availableCashIdr, isPrivacy)} ($cashUsdStr)",
+                126f,
+                y + 240f,
                 subHeaderPaint
             )
-            y += 350f
+            y += 304f
 
-            // 5. Stock-Style Mini Chart Box (Live USD/IDR & Wealth Trajectory)
-            val chartRect = RectF(96f, y, WIDTH - 96f, y + 280f)
+            // 5. Stock-Style Mini Chart Box (Live USD/IDR)
             val boxSurfacePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.rgb(22, 29, 40)
             }
-            canvas.drawRoundRect(chartRect, 32f, 32f, boxSurfacePaint)
-            canvas.drawText("GRAFIK PASAR REAL-TIME USD/IDR (1 MENIT) & TREN ASET", 132f, y + 50f, labelPaint)
+            val chartRect = RectF(92f, y, WIDTH - 92f, y + 215f)
+            canvas.drawRoundRect(chartRect, 30f, 30f, boxSurfacePaint)
+            canvas.drawText("GRAFIK PASAR REAL-TIME USD/IDR (1 MENIT)", 126f, y + 46f, labelPaint)
 
             val candles = usdMarket.candles
             if (candles.size >= 2) {
                 val minP = candles.minOf { it.lowIdr }
                 val maxP = candles.maxOf { it.highIdr }
                 val range = max(1.0, maxP - minP)
-                val plotLeft = 132f
-                val plotRight = WIDTH - 132f
-                val plotTop = y + 80f
-                val plotBottom = y + 240f
+                val plotLeft = 126f
+                val plotRight = WIDTH - 126f
+                val plotTop = y + 72f
+                val plotBottom = y + 186f
                 val stepX = (plotRight - plotLeft) / max(1, candles.size - 1)
 
                 val linePath = Path()
@@ -210,40 +227,95 @@ object StatusImageExporter {
                 }
                 canvas.drawPath(linePath, linePaint)
             }
-            y += 320f
+            y += 242f
 
             // 6. Cash Flow Period Cards (Income vs Expense)
-            val halfW = (WIDTH - 96f * 2 - 28f) / 2f
-            val incRect = RectF(96f, y, 96f + halfW, y + 190f)
-            val expRect = RectF(96f + halfW + 28f, y, WIDTH - 96f, y + 190f)
-            canvas.drawRoundRect(incRect, 28f, 28f, boxSurfacePaint)
-            canvas.drawRoundRect(expRect, 28f, 28f, boxSurfacePaint)
+            val halfW = (WIDTH - 92f * 2 - 24f) / 2f
+            val incRect = RectF(92f, y, 92f + halfW, y + 170f)
+            val expRect = RectF(92f + halfW + 24f, y, WIDTH - 92f, y + 170f)
+            canvas.drawRoundRect(incRect, 26f, 26f, boxSurfacePaint)
+            canvas.drawRoundRect(expRect, 26f, 26f, boxSurfacePaint)
 
-            canvas.drawText("PEMASUKAN ($periodLabel)", incRect.left + 32f, y + 56f, labelPaint)
+            canvas.drawText("PEMASUKAN ($periodLabel)", incRect.left + 28f, y + 48f, labelPaint)
             val incPaint = Paint(metricValuePaint).apply { color = Color.rgb(73, 224, 160) }
-            canvas.drawText(IdrFormatter.format(overview.periodIncomeIdr, isPrivacy), incRect.left + 32f, y + 120f, incPaint)
+            canvas.drawText(IdrFormatter.format(overview.periodIncomeIdr, isPrivacy), incRect.left + 28f, y + 106f, incPaint)
             canvas.drawText(
                 IdrFormatter.formatUsdFromIdr(overview.periodIncomeIdr, usdMarket.currentRateIdr, isPrivacy),
-                incRect.left + 32f,
-                y + 162f,
+                incRect.left + 28f,
+                y + 144f,
                 subHeaderPaint
             )
 
-            canvas.drawText("PENGELUARAN ($periodLabel)", expRect.left + 32f, y + 56f, labelPaint)
+            canvas.drawText("PENGELUARAN ($periodLabel)", expRect.left + 28f, y + 48f, labelPaint)
             val expPaint = Paint(metricValuePaint).apply { color = Color.rgb(255, 90, 101) }
-            canvas.drawText(IdrFormatter.format(overview.periodExpenseIdr, isPrivacy), expRect.left + 32f, y + 120f, expPaint)
+            canvas.drawText(IdrFormatter.format(overview.periodExpenseIdr, isPrivacy), expRect.left + 28f, y + 106f, expPaint)
             canvas.drawText(
                 IdrFormatter.formatUsdFromIdr(overview.periodExpenseIdr, usdMarket.currentRateIdr, isPrivacy),
-                expRect.left + 32f,
-                y + 162f,
+                expRect.left + 28f,
+                y + 144f,
                 subHeaderPaint
             )
-            y += 230f
+            y += 196f
 
-            // 7. Auto-Connected Savings Goals Progress
-            val goalRect = RectF(96f, y, WIDTH - 96f, y + 230f)
+            // 7. Annual Performance Summary Box (Masuk & Abis Tahun Berjalan)
+            if (annualSummary != null) {
+                val annualRect = RectF(92f, y, WIDTH - 92f, y + 160f)
+                canvas.drawRoundRect(annualRect, 26f, 26f, boxSurfacePaint)
+                canvas.drawText("REKAP TAHUNAN (${annualSummary.year} • ${annualSummary.transactionCount} TRANSAKSI)", 126f, y + 48f, labelPaint)
+                canvas.drawText(
+                    "Masuk: ${IdrFormatter.format(annualSummary.totalIncomeIdr, isPrivacy)}",
+                    126f,
+                    y + 98f,
+                    Paint(smallMonoPaint).apply { color = Color.rgb(73, 224, 160) }
+                )
+                canvas.drawText(
+                    "Keluar: ${IdrFormatter.format(annualSummary.totalNetExpenseIdr, isPrivacy)}",
+                    WIDTH / 2f + 12f,
+                    y + 98f,
+                    Paint(smallMonoPaint).apply { color = Color.rgb(255, 90, 101) }
+                )
+                canvas.drawText(
+                    "Arus Kas Bersih ${annualSummary.year}: ${IdrFormatter.format(annualSummary.netCashFlowIdr, isPrivacy, showPlusSign = true)} (Saving Rate: ${annualSummary.savingsRatePercent}%)",
+                    126f,
+                    y + 136f,
+                    subHeaderPaint
+                )
+                y += 186f
+            }
+
+            // 8. Detailed Top Expense Categories + Accounts Snapshot
+            val detailRect = RectF(92f, y, WIDTH - 92f, y + 290f)
+            canvas.drawRoundRect(detailRect, 28f, 28f, boxSurfacePaint)
+            canvas.drawText("RINCIAN PENGELUARAN PER KATEGORI & REKENING", 126f, y + 48f, labelPaint)
+
+            var detailY = y + 92f
+            if (categoryBreakdown.isEmpty()) {
+                canvas.drawText("• Belum ada pengeluaran tercatat per kategori pada periode ini.", 126f, detailY, subHeaderPaint)
+                detailY += 38f
+            } else {
+                categoryBreakdown.take(4).forEach { cat ->
+                    val pctText = String.format(Locale.US, "%.1f%%", cat.percentage)
+                    canvas.drawText("• ${cat.categoryName.take(24)} (${cat.transactionCount}x • $pctText)", 126f, detailY, bodyRowPaint)
+                    val amtText = IdrFormatter.format(cat.amountIdr, isPrivacy)
+                    val amtW = smallMonoPaint.measureText(amtText)
+                    canvas.drawText(amtText, WIDTH - 126f - amtW, detailY, smallMonoPaint)
+                    detailY += 38f
+                }
+            }
+
+            if (accounts.isNotEmpty()) {
+                detailY += 8f
+                val topAccText = accounts.take(3).joinToString("  |  ") { acc ->
+                    "${acc.name}: ${IdrFormatter.formatCompact(acc.currentBalanceIdr, isPrivacy)}"
+                }
+                canvas.drawText("Saldo Akun: $topAccText", 126f, detailY, subHeaderPaint)
+            }
+            y += 316f
+
+            // 9. Auto-Connected Savings Goals Progress
+            val goalRect = RectF(92f, y, WIDTH - 92f, y + 185f)
             canvas.drawRoundRect(goalRect, 28f, 28f, boxSurfacePaint)
-            canvas.drawText("TARGET TABUNGAN (TERKONEKSI TOTAL SALDO OTOMATIS)", 132f, y + 54f, labelPaint)
+            canvas.drawText("TARGET TABUNGAN (TERKONEKSI TOTAL SALDO OTOMATIS)", 126f, y + 48f, labelPaint)
 
             val totalGoalTarget = goals.sumOf { it.targetAmountIdr }
             val effectiveSaved = if (goals.isNotEmpty()) {
@@ -256,25 +328,25 @@ object StatusImageExporter {
             } else 100
 
             canvas.drawText(
-                "Terkumpul: ${IdrFormatter.format(effectiveSaved, isPrivacy)} / Target: ${IdrFormatter.format(totalGoalTarget, isPrivacy)} ($pct%)",
-                132f,
-                y + 112f,
-                metricValuePaint
+                "Terkumpul: ${IdrFormatter.format(effectiveSaved, isPrivacy)} / ${IdrFormatter.format(totalGoalTarget, isPrivacy)} ($pct%)",
+                126f,
+                y + 102f,
+                smallMonoPaint
             )
 
             // Progress track
-            val barTrack = RectF(132f, y + 145f, WIDTH - 132f, y + 185f)
+            val barTrack = RectF(126f, y + 126f, WIDTH - 126f, y + 156f)
             val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(36, 48, 66) }
-            canvas.drawRoundRect(barTrack, 20f, 20f, trackPaint)
+            canvas.drawRoundRect(barTrack, 16f, 16f, trackPaint)
             val fillWidth = (barTrack.width() * (pct / 100f)).coerceAtLeast(24f)
-            val barFill = RectF(132f, y + 145f, 132f + fillWidth, y + 185f)
-            canvas.drawRoundRect(barFill, 20f, 20f, brandPaint)
+            val barFill = RectF(126f, y + 126f, 126f + fillWidth, y + 156f)
+            canvas.drawRoundRect(barFill, 16f, 16f, brandPaint)
 
-            // 8. Footer Signature
+            // 10. Footer Signature
             canvas.drawText(
-                "Verified by XynoosFinance AI Ledger  •  Understand your money. Control your future.",
-                104f,
-                HEIGHT - 96f,
+                "Verified by XynoosFinance AI Ledger • Xynoos Technology • Understand your money.",
+                96f,
+                HEIGHT - 86f,
                 subHeaderPaint
             )
 

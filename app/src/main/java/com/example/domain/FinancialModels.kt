@@ -217,8 +217,19 @@ data class InvoiceReferenceModel(
     val updatedAtMillis: Long = System.currentTimeMillis()
 )
 
+data class AiSessionModel(
+    val id: String,
+    val userId: String,
+    val title: String,
+    val createdAtMillis: Long = System.currentTimeMillis(),
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+    val lastMessagePreview: String = "",
+    val messageCount: Int = 0
+)
+
 data class AiMessageModel(
     val id: String,
+    val sessionId: String = "default_session",
     val userId: String,
     val role: String, // "user" or "assistant"
     val content: String,
@@ -271,25 +282,97 @@ data class BusinessProfitLossSummary(
     val projectSummaries: Map<String, Long>
 )
 
+data class TransactionTypeSummaryItem(
+    val type: TransactionType,
+    val totalAmountIdr: Long,
+    val transactionCount: Int,
+    val percentageOfVolume: Float
+)
+
+data class MonthlyLedgerSummary(
+    val year: Int,
+    val monthIndex: Int, // 0..11
+    val monthLabel: String,
+    val shortMonthLabel: String,
+    val incomeIdr: Long,
+    val grossExpenseIdr: Long,
+    val refundIdr: Long,
+    val netExpenseIdr: Long,
+    val transferIdr: Long,
+    val adjustmentIdr: Long,
+    val netCashFlowIdr: Long,
+    val savingsRatePercent: Int,
+    val transactionCount: Int,
+    val typeBreakdown: List<TransactionTypeSummaryItem>,
+    val expenseCategoryBreakdown: List<CategoryBreakdownItem>,
+    val incomeCategoryBreakdown: List<CategoryBreakdownItem>,
+    val budgetSummaries: List<BudgetProgressSummary>,
+    val transactions: List<TransactionModel>
+)
+
+data class AnnualLedgerSummary(
+    val year: Int,
+    val totalIncomeIdr: Long,
+    val totalGrossExpenseIdr: Long,
+    val totalRefundIdr: Long,
+    val totalNetExpenseIdr: Long,
+    val totalTransferIdr: Long,
+    val totalAdjustmentIdr: Long,
+    val netCashFlowIdr: Long,
+    val savingsRatePercent: Int,
+    val transactionCount: Int,
+    val averageMonthlyIncomeIdr: Long,
+    val averageMonthlyExpenseIdr: Long,
+    val highestIncomeMonthLabel: String,
+    val highestExpenseMonthLabel: String,
+    val monthlyBreakdown: List<MonthlyLedgerSummary>,
+    val expenseCategoryBreakdown: List<CategoryBreakdownItem>,
+    val incomeCategoryBreakdown: List<CategoryBreakdownItem>,
+    val typeBreakdown: List<TransactionTypeSummaryItem>
+)
+
+data class AccountActivitySummary(
+    val account: FinancialAccountModel,
+    val inflowIdr: Long,
+    val outflowIdr: Long,
+    val transactionCount: Int
+)
+
 object DefaultCategories {
     fun getDefaults(userId: String): List<TransactionCategoryModel> = listOf(
-        // Income Categories
-        TransactionCategoryModel("cat_salary", userId, "Gaji Utama", TransactionType.INCOME, "work", "#49E0A0", 1),
-        TransactionCategoryModel("cat_freelance", userId, "Freelance & Proyek", TransactionType.INCOME, "laptop", "#72A7FF", 2),
-        TransactionCategoryModel("cat_business_rev", userId, "Pendapatan Bisnis", TransactionType.INCOME, "store", "#38BDF8", 3),
-        TransactionCategoryModel("cat_investment", userId, "Hasil Investasi", TransactionType.INCOME, "trending_up", "#A78BFA", 4),
-        // Expense Categories
-        TransactionCategoryModel("cat_food", userId, "Makanan & Minuman", TransactionType.EXPENSE, "restaurant", "#F5A623", 5),
-        TransactionCategoryModel("cat_transport", userId, "Transportasi", TransactionType.EXPENSE, "directions_car", "#72A7FF", 6),
-        TransactionCategoryModel("cat_housing", userId, "Tempat Tinggal", TransactionType.EXPENSE, "home", "#EC4899", 7),
-        TransactionCategoryModel("cat_utilities", userId, "Tagihan & Utilitas", TransactionType.EXPENSE, "bolt", "#FBBF24", 8),
-        TransactionCategoryModel("cat_shopping", userId, "Belanja", TransactionType.EXPENSE, "shopping_bag", "#F472B6", 9),
-        TransactionCategoryModel("cat_health", userId, "Kesehatan", TransactionType.EXPENSE, "medical_services", "#34D399", 10),
-        TransactionCategoryModel("cat_education", userId, "Pendidikan", TransactionType.EXPENSE, "school", "#60A5FA", 11),
-        TransactionCategoryModel("cat_entertainment", userId, "Hiburan", TransactionType.EXPENSE, "movie", "#C084FC", 12),
-        TransactionCategoryModel("cat_taxes", userId, "Pajak & Retribusi", TransactionType.EXPENSE, "account_balance", "#FF5A65", 13),
-        TransactionCategoryModel("cat_biz_ops", userId, "Operasional Bisnis", TransactionType.EXPENSE, "business_center", "#38BDF8", 14),
-        TransactionCategoryModel("cat_equipment", userId, "Peralatan & Perangkat", TransactionType.EXPENSE, "devices", "#818CF8", 15),
-        TransactionCategoryModel("cat_other", userId, "Lainnya", TransactionType.EXPENSE, "category", "#98A3B3", 16)
+        // Income Categories (Pemasukan)
+        TransactionCategoryModel("cat_salary", userId, "Gaji Pekerjaan", TransactionType.INCOME, "work", "#49E0A0", 1),
+        TransactionCategoryModel("cat_salary_pkl", userId, "Gaji PKL / Magang", TransactionType.INCOME, "badge", "#34D399", 2),
+        TransactionCategoryModel("cat_salary_other", userId, "Gaji Lain", TransactionType.INCOME, "payments", "#2DD4BF", 3),
+        TransactionCategoryModel("cat_bonus_thr", userId, "Bonus, Lembur & THR", TransactionType.INCOME, "redeem", "#FBBF24", 4),
+        TransactionCategoryModel("cat_allowance", userId, "Uang Saku & Kiriman", TransactionType.INCOME, "wallet", "#60A5FA", 5),
+        TransactionCategoryModel("cat_freelance", userId, "Freelance & Proyek", TransactionType.INCOME, "laptop", "#72A7FF", 6),
+        TransactionCategoryModel("cat_side_hustle", userId, "Jualan & Side Hustle", TransactionType.INCOME, "storefront", "#FB923C", 7),
+        TransactionCategoryModel("cat_business_rev", userId, "Pendapatan Bisnis", TransactionType.INCOME, "store", "#38BDF8", 8),
+        TransactionCategoryModel("cat_investment", userId, "Hasil Investasi & Dividen", TransactionType.INCOME, "trending_up", "#A78BFA", 9),
+        TransactionCategoryModel("cat_cashback_prize", userId, "Cashback, Komisi & Hadiah", TransactionType.INCOME, "stars", "#F472B6", 10),
+        // Expense Categories (Pengeluaran)
+        TransactionCategoryModel("cat_buy_food", userId, "Beli Makanan & Lauk", TransactionType.EXPENSE, "restaurant", "#FF8A4C", 11),
+        TransactionCategoryModel("cat_buy_snack", userId, "Beli Jajan & Camilan", TransactionType.EXPENSE, "bakery_dining", "#F59E0B", 12),
+        TransactionCategoryModel("cat_coffee_hangout", userId, "Kopi, Minuman & Nongkrong", TransactionType.EXPENSE, "local_cafe", "#D97706", 13),
+        TransactionCategoryModel("cat_buy_fuel", userId, "Beli Bensin & BBM", TransactionType.EXPENSE, "local_gas_station", "#EF4444", 14),
+        TransactionCategoryModel("cat_ojol_parking", userId, "Ojol, Tol & Parkir", TransactionType.EXPENSE, "two_wheeler", "#3B82F6", 15),
+        TransactionCategoryModel("cat_pulsa_data", userId, "Paket Data, Pulsa & WiFi", TransactionType.EXPENSE, "wifi", "#06B6D4", 16),
+        TransactionCategoryModel("cat_food", userId, "Belanja Dapur & Sembako", TransactionType.EXPENSE, "shopping_cart", "#F5A623", 17),
+        TransactionCategoryModel("cat_transport", userId, "Transportasi Umum", TransactionType.EXPENSE, "directions_car", "#72A7FF", 18),
+        TransactionCategoryModel("cat_housing", userId, "Kos, Kontrakan & Tempat Tinggal", TransactionType.EXPENSE, "home", "#EC4899", 19),
+        TransactionCategoryModel("cat_utilities", userId, "Listrik, Air & Tagihan", TransactionType.EXPENSE, "bolt", "#FBBF24", 20),
+        TransactionCategoryModel("cat_shopping", userId, "Belanja Baju & Kebutuhan", TransactionType.EXPENSE, "shopping_bag", "#F472B6", 21),
+        TransactionCategoryModel("cat_subscriptions", userId, "Langganan App & Streaming", TransactionType.EXPENSE, "subscriptions", "#8B5CF6", 22),
+        TransactionCategoryModel("cat_skincare_grooming", userId, "Skincare, Barber & Perawatan", TransactionType.EXPENSE, "spa", "#F43F5E", 23),
+        TransactionCategoryModel("cat_hobby_gaming", userId, "Hobi, Game & Top-Up", TransactionType.EXPENSE, "sports_esports", "#A855F7", 24),
+        TransactionCategoryModel("cat_health", userId, "Kesehatan & Obat", TransactionType.EXPENSE, "medical_services", "#34D399", 25),
+        TransactionCategoryModel("cat_education", userId, "Pendidikan, Kursus & Buku", TransactionType.EXPENSE, "school", "#60A5FA", 26),
+        TransactionCategoryModel("cat_entertainment", userId, "Hiburan, Bioskop & Liburan", TransactionType.EXPENSE, "movie", "#C084FC", 27),
+        TransactionCategoryModel("cat_gift_charity", userId, "Sedekah, Kado & Sosial", TransactionType.EXPENSE, "volunteer_activism", "#10B981", 28),
+        TransactionCategoryModel("cat_taxes", userId, "Pajak & Retribusi", TransactionType.EXPENSE, "account_balance", "#FF5A65", 29),
+        TransactionCategoryModel("cat_biz_ops", userId, "Operasional Bisnis", TransactionType.EXPENSE, "business_center", "#38BDF8", 30),
+        TransactionCategoryModel("cat_equipment", userId, "Peralatan & Gadget", TransactionType.EXPENSE, "devices", "#818CF8", 31),
+        TransactionCategoryModel("cat_other", userId, "Lainnya", TransactionType.EXPENSE, "category", "#98A3B3", 32)
     )
 }

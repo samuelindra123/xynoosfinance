@@ -610,4 +610,267 @@ object FinancialCalculator {
         }
         return transactions.filter { !it.isDeleted && it.transactionDateMillis >= startMillis }
     }
+
+    private val indonesianMonthsFull = listOf(
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember"
+    )
+
+    private val indonesianMonthsShort = listOf(
+        "Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
+        "Jul", "Agu", "Sep", "Okt", "Nov", "Des"
+    )
+
+    fun getMonthNameFull(monthIndex: Int): String =
+        indonesianMonthsFull.getOrElse(monthIndex) { "Bulan" }
+
+    fun getMonthNameShort(monthIndex: Int): String =
+        indonesianMonthsShort.getOrElse(monthIndex) { "Bln" }
+
+    fun getAvailableYears(
+        transactions: List<TransactionModel>,
+        referenceTimeMillis: Long = System.currentTimeMillis()
+    ): List<Int> {
+        val currentYear = Calendar.getInstance().apply { timeInMillis = referenceTimeMillis }.get(Calendar.YEAR)
+        val years = mutableSetOf(currentYear)
+        val cal = Calendar.getInstance()
+        for (tx in transactions) {
+            if (!tx.isDeleted && tx.transactionDateMillis > 0L) {
+                cal.timeInMillis = tx.transactionDateMillis
+                years.add(cal.get(Calendar.YEAR))
+            }
+        }
+        return years.sortedDescending()
+    }
+
+    fun filterTransactionsByMonth(
+        transactions: List<TransactionModel>,
+        year: Int,
+        monthIndex: Int
+    ): List<TransactionModel> {
+        val cal = Calendar.getInstance()
+        return transactions
+            .filter { tx ->
+                if (tx.isDeleted || tx.amountIdr <= 0L) return@filter false
+                cal.timeInMillis = tx.transactionDateMillis
+                cal.get(Calendar.YEAR) == year && cal.get(Calendar.MONTH) == monthIndex
+            }
+            .sortedByDescending { it.transactionDateMillis }
+    }
+
+    fun filterTransactionsByYear(
+        transactions: List<TransactionModel>,
+        year: Int
+    ): List<TransactionModel> {
+        val cal = Calendar.getInstance()
+        return transactions
+            .filter { tx ->
+                if (tx.isDeleted || tx.amountIdr <= 0L) return@filter false
+                cal.timeInMillis = tx.transactionDateMillis
+                cal.get(Calendar.YEAR) == year
+            }
+            .sortedByDescending { it.transactionDateMillis }
+    }
+
+    fun calculateTypeBreakdown(
+        transactions: List<TransactionModel>
+    ): List<TransactionTypeSummaryItem> {
+        val active = transactions.filter { !it.isDeleted && it.amountIdr > 0L }
+        val totalVolume = active.sumOf { it.amountIdr }.coerceAtLeast(1L)
+        return TransactionType.entries.map { type ->
+            val matching = active.filter { it.type == type }
+            val sum = matching.sumOf { it.amountIdr }
+            TransactionTypeSummaryItem(
+                type = type,
+                totalAmountIdr = sum,
+                transactionCount = matching.size,
+                percentageOfVolume = if (sum > 0L) ((sum.toDouble() / totalVolume.toDouble()) * 100.0).toFloat() else 0f
+            )
+        }
+    }
+
+    fun calculateIncomeCategoryBreakdown(
+        transactions: List<TransactionModel>,
+        categories: List<TransactionCategoryModel>
+    ): List<CategoryBreakdownItem> {
+        val colorMap = categories.associate { it.id to it.colorHex }
+        val activeIncomes = transactions.filter { !it.isDeleted && it.type == TransactionType.INCOME && it.amountIdr > 0L }
+        val totalIncome = activeIncomes.sumOf { it.amountIdr }
+        if (totalIncome <= 0L) return emptyList()
+
+        return activeIncomes
+            .groupBy { it.categoryId }
+            .map { (catId, txs) ->
+                val amount = txs.sumOf { it.amountIdr }
+                CategoryBreakdownItem(
+                    categoryId = catId,
+                    categoryName = txs.first().categoryName,
+                    amountIdr = amount,
+                    percentage = ((amount.toDouble() / totalIncome.toDouble()) * 100.0).toFloat(),
+                    colorHex = colorMap[catId] ?: "#49E0A0",
+                    transactionCount = txs.size
+                )
+            }
+            .sortedByDescending { it.amountIdr }
+    }
+
+    fun calculateMonthlyLedgerSummary(
+        year: Int,
+        monthIndex: Int,
+        allTransactions: List<TransactionModel>,
+        categories: List<TransactionCategoryModel>,
+        budgets: List<BudgetModel>
+    ): MonthlyLedgerSummary {
+        val safeMonth = monthIndex.coerceIn(0, 11)
+        val monthTxs = filterTransactionsByMonth(allTransactions, year, safeMonth)
+
+        var income = 0L
+        var grossExpense = 0L
+        var refund = 0L
+        var transfer = 0L
+        var adjustment = 0L
+
+        for (tx in monthTxs) {
+            when (tx.type) {
+                TransactionType.INCOME -> income += tx.amountIdr
+                TransactionType.EXPENSE -> grossExpense += tx.amountIdr
+                TransactionType.REFUND -> refund += tx.amountIdr
+                TransactionType.TRANSFER -> transfer += tx.amountIdr
+                TransactionType.ADJUSTMENT -> adjustment += tx.amountIdr
+            }
+        }
+
+        val netExpense = max(0L, grossExpense - refund)
+        val netCashFlow = income - netExpense
+        val savingsRate = if (income > 0L) {
+            (((income - netExpense).coerceAtLeast(0L) * 100L) / income).toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+
+        val budgetSummaries = budgets.map { b -> calculateBudgetProgress(b, monthTxs) }
+
+        return MonthlyLedgerSummary(
+            year = year,
+            monthIndex = safeMonth,
+            monthLabel = "${getMonthNameFull(safeMonth)} $year",
+            shortMonthLabel = getMonthNameShort(safeMonth),
+            incomeIdr = income,
+            grossExpenseIdr = grossExpense,
+            refundIdr = refund,
+            netExpenseIdr = netExpense,
+            transferIdr = transfer,
+            adjustmentIdr = adjustment,
+            netCashFlowIdr = netCashFlow,
+            savingsRatePercent = savingsRate,
+            transactionCount = monthTxs.size,
+            typeBreakdown = calculateTypeBreakdown(monthTxs),
+            expenseCategoryBreakdown = calculateCategoryBreakdown(monthTxs, categories),
+            incomeCategoryBreakdown = calculateIncomeCategoryBreakdown(monthTxs, categories),
+            budgetSummaries = budgetSummaries,
+            transactions = monthTxs
+        )
+    }
+
+    fun calculateAnnualLedgerSummary(
+        year: Int,
+        allTransactions: List<TransactionModel>,
+        categories: List<TransactionCategoryModel>,
+        budgets: List<BudgetModel>
+    ): AnnualLedgerSummary {
+        val monthlyList = (0..11).map { m ->
+            calculateMonthlyLedgerSummary(
+                year = year,
+                monthIndex = m,
+                allTransactions = allTransactions,
+                categories = categories,
+                budgets = budgets
+            )
+        }
+        val yearTxs = filterTransactionsByYear(allTransactions, year)
+        val totalIncome = monthlyList.sumOf { it.incomeIdr }
+        val totalGrossExpense = monthlyList.sumOf { it.grossExpenseIdr }
+        val totalRefund = monthlyList.sumOf { it.refundIdr }
+        val totalNetExpense = monthlyList.sumOf { it.netExpenseIdr }
+        val totalTransfer = monthlyList.sumOf { it.transferIdr }
+        val totalAdjustment = monthlyList.sumOf { it.adjustmentIdr }
+        val netCashFlow = totalIncome - totalNetExpense
+        val savingsRate = if (totalIncome > 0L) {
+            (((totalIncome - totalNetExpense).coerceAtLeast(0L) * 100L) / totalIncome).toInt().coerceIn(0, 100)
+        } else {
+            0
+        }
+
+        val activeMonthsCount = monthlyList.count { it.transactionCount > 0 }.coerceAtLeast(1)
+        val avgIncome = totalIncome / activeMonthsCount
+        val avgExpense = totalNetExpense / activeMonthsCount
+
+        val highestIncMonth = monthlyList.filter { it.incomeIdr > 0L }.maxByOrNull { it.incomeIdr }
+        val highestExpMonth = monthlyList.filter { it.netExpenseIdr > 0L }.maxByOrNull { it.netExpenseIdr }
+
+        return AnnualLedgerSummary(
+            year = year,
+            totalIncomeIdr = totalIncome,
+            totalGrossExpenseIdr = totalGrossExpense,
+            totalRefundIdr = totalRefund,
+            totalNetExpenseIdr = totalNetExpense,
+            totalTransferIdr = totalTransfer,
+            totalAdjustmentIdr = totalAdjustment,
+            netCashFlowIdr = netCashFlow,
+            savingsRatePercent = savingsRate,
+            transactionCount = yearTxs.size,
+            averageMonthlyIncomeIdr = avgIncome,
+            averageMonthlyExpenseIdr = avgExpense,
+            highestIncomeMonthLabel = highestIncMonth?.let { "${it.monthLabel} (${IdrFormatter.formatCompact(it.incomeIdr)})" } ?: "-",
+            highestExpenseMonthLabel = highestExpMonth?.let { "${it.monthLabel} (${IdrFormatter.formatCompact(it.netExpenseIdr)})" } ?: "-",
+            monthlyBreakdown = monthlyList,
+            expenseCategoryBreakdown = calculateCategoryBreakdown(yearTxs, categories),
+            incomeCategoryBreakdown = calculateIncomeCategoryBreakdown(yearTxs, categories),
+            typeBreakdown = calculateTypeBreakdown(yearTxs)
+        )
+    }
+
+    fun calculateAccountActivities(
+        accounts: List<FinancialAccountModel>,
+        transactions: List<TransactionModel>
+    ): List<AccountActivitySummary> {
+        val activeTxs = transactions.filter { !it.isDeleted && it.amountIdr > 0L }
+        return accounts.map { acc ->
+            var inflow = 0L
+            var outflow = 0L
+            var count = 0
+            for (tx in activeTxs) {
+                when (tx.type) {
+                    TransactionType.INCOME, TransactionType.REFUND, TransactionType.ADJUSTMENT -> {
+                        if (tx.accountId == acc.id) {
+                            inflow += tx.amountIdr
+                            count++
+                        }
+                    }
+                    TransactionType.EXPENSE -> {
+                        if (tx.accountId == acc.id) {
+                            outflow += tx.amountIdr
+                            count++
+                        }
+                    }
+                    TransactionType.TRANSFER -> {
+                        if (tx.accountId == acc.id) {
+                            outflow += tx.amountIdr
+                            count++
+                        }
+                        if (tx.toAccountId == acc.id) {
+                            inflow += tx.amountIdr
+                            count++
+                        }
+                    }
+                }
+            }
+            AccountActivitySummary(
+                account = acc,
+                inflowIdr = inflow,
+                outflowIdr = outflow,
+                transactionCount = count
+            )
+        }
+    }
 }

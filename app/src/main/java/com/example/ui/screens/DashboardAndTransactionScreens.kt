@@ -1,5 +1,6 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -7,14 +8,19 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -27,9 +33,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sort
@@ -48,9 +57,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -67,9 +76,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.domain.BudgetAlertLevel
 import com.example.domain.DashboardPeriod
 import com.example.domain.FinancialAccountModel
@@ -106,7 +118,8 @@ fun HomeDashboardScreen(
     onSyncClicked: () -> Unit,
     onOpenUsdMarketTerminal: () -> Unit = {},
     onQuickExportStatusImage: () -> Unit = {},
-    onSendWhatsAppQuick: () -> Unit = {}
+    onSendWhatsAppQuick: () -> Unit = {},
+    onOpenMonthlyAnnualAnalytics: () -> Unit = {}
 ) {
     val overview = uiState.overview
     val isPrivacy = uiState.prefs.isPrivacyModeEnabled
@@ -345,6 +358,47 @@ fun HomeDashboardScreen(
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                     ) {
                         Text("💬 Kirim Notif WA", style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                    }
+                }
+
+                // Quick Access Banner to New Monthly & Annual Budget / Cashflow Analytics Page
+                Card(
+                    onClick = onOpenMonthlyAnnualAnalytics,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, EmeraldPrimary.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
+                        .testTag("home_open_monthly_annual_card")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "📅 Anggaran, Pemasukan & Rekap Bulanan/Tahunan",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = EmeraldPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${uiState.monthlyLedgerSummary.monthLabel}: Masuk ${IdrFormatter.formatCompact(uiState.monthlyLedgerSummary.incomeIdr, isPrivacy)} • Abis ${IdrFormatter.formatCompact(uiState.monthlyLedgerSummary.netExpenseIdr, isPrivacy)} | Tahun ${uiState.analyticsYear}: ${uiState.annualLedgerSummary.transactionCount} tx",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        Text(
+                            text = "Buka →",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = SapphireSecondary,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -742,7 +796,7 @@ fun TransactionsScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun TransactionFormBottomSheet(
     initialType: TransactionType = TransactionType.EXPENSE,
@@ -767,18 +821,29 @@ fun TransactionFormBottomSheet(
     ) -> Unit
 ) {
     var selectedType by rememberSaveable { mutableStateOf(editingTransaction?.type ?: initialType) }
-    var amountInput by rememberSaveable { mutableStateOf(editingTransaction?.amountIdr?.toString() ?: "") }
+    var amountInput by rememberSaveable {
+        mutableStateOf(
+            editingTransaction?.amountIdr?.let { IdrFormatter.formatGroupedInputString(it.toString()) } ?: ""
+        )
+    }
     var titleInput by rememberSaveable { mutableStateOf(editingTransaction?.title ?: "") }
     var notesInput by rememberSaveable { mutableStateOf(editingTransaction?.notes ?: "") }
     var merchantInput by rememberSaveable { mutableStateOf(editingTransaction?.merchantName ?: "") }
     var projectInput by rememberSaveable { mutableStateOf(editingTransaction?.projectCostCenterId ?: "") }
+    var showOptionalDetails by rememberSaveable {
+        mutableStateOf(
+            !editingTransaction?.notes.isNullOrBlank() ||
+                !editingTransaction?.merchantName.isNullOrBlank() ||
+                !editingTransaction?.projectCostCenterId.isNullOrBlank()
+        )
+    }
 
     val availableCategories = categories.filter {
         if (selectedType == TransactionType.INCOME) it.type == TransactionType.INCOME else it.type == TransactionType.EXPENSE
     }.ifEmpty { categories }
 
     var selectedCategoryId by rememberSaveable {
-        mutableStateOf(editingTransaction?.categoryId ?: availableCategories.firstOrNull()?.id ?: "cat_food")
+        mutableStateOf(editingTransaction?.categoryId ?: availableCategories.firstOrNull()?.id ?: "cat_buy_food")
     }
     var selectedAccountId by rememberSaveable {
         mutableStateOf(editingTransaction?.accountId ?: accounts.firstOrNull()?.id ?: "acc_default")
@@ -788,279 +853,395 @@ fun TransactionFormBottomSheet(
     }
     var validationError by remember { mutableStateOf<String?>(null) }
 
-    ModalBottomSheet(
+    val parsedAmount = IdrFormatter.parseIdrInput(amountInput) ?: 0L
+    val accentColor = when (selectedType) {
+        TransactionType.INCOME, TransactionType.REFUND -> EmeraldPrimary
+        TransactionType.EXPENSE -> RefinedRed
+        else -> SapphireSecondary
+    }
+
+    fun submitTransaction() {
+        if (parsedAmount <= 0L) {
+            validationError = "Masukkan nominal lebih besar dari Rp0."
+            return
+        }
+        if (selectedType == TransactionType.TRANSFER && selectedAccountId == selectedToAccountId) {
+            validationError = "Rekening asal dan tujuan transfer tidak boleh sama."
+            return
+        }
+        val chosenAcc = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
+        val chosenToAcc = accounts.firstOrNull { it.id == selectedToAccountId }
+        val chosenCat = availableCategories.firstOrNull { it.id == selectedCategoryId }
+            ?: categories.firstOrNull { it.id == selectedCategoryId }
+
+        onSave(
+            editingTransaction?.id,
+            selectedType,
+            parsedAmount,
+            titleInput.ifBlank {
+                if (selectedType == TransactionType.TRANSFER) "Transfer Antar Rekening" else (chosenCat?.name ?: "Transaksi")
+            },
+            if (selectedType == TransactionType.TRANSFER) "cat_transfer" else (chosenCat?.id ?: "cat_other"),
+            if (selectedType == TransactionType.TRANSFER) "Transfer Internal" else (chosenCat?.name ?: "Lainnya"),
+            chosenAcc?.id ?: "acc_default",
+            chosenAcc?.name ?: "Tunai Utama",
+            chosenToAcc?.id,
+            chosenToAcc?.name,
+            notesInput,
+            merchantInput,
+            projectInput
+        )
+    }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
     ) {
-        Column(
+        Scaffold(
             modifier = Modifier
-                .fillMaxWidth()
-                .imePadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .fillMaxSize()
                 .testTag("transaction_form_sheet"),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text(
-                text = if (editingTransaction == null) "Catat Transaksi Baru" else "Edit Transaksi",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            // Type Selector
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                TransactionType.entries.forEach { t ->
-                    FilterChip(
-                        selected = selectedType == t,
-                        onClick = {
-                            selectedType = t
-                            val firstMatching = categories.firstOrNull {
-                                if (t == TransactionType.INCOME) it.type == TransactionType.INCOME else it.type == TransactionType.EXPENSE
-                            }
-                            if (firstMatching != null) selectedCategoryId = firstMatching.id
-                        },
-                        label = { Text(t.labelId) },
-                        modifier = Modifier.testTag("tx_type_chip_${t.name}")
-                    )
-                }
-            }
-
-            // Dedicated Financial Nominal & Balance Calculator Input UI
-            val parsedAmount = IdrFormatter.parseIdrInput(amountInput) ?: 0L
-            XynoosCurrencyNominalInput(
-                value = amountInput,
-                onValueChange = {
-                    amountInput = it
-                    validationError = null
-                },
-                label = "Nominal Transaksi (${selectedType.labelId})",
-                inputTestTag = "tx_amount_input",
-                accentColor = when (selectedType) {
-                    TransactionType.INCOME, TransactionType.REFUND -> EmeraldPrimary
-                    TransactionType.EXPENSE -> RefinedRed
-                    else -> SapphireSecondary
-                },
-                helperSubtitle = "Ketik angka atau gunakan tombol hitung nominal di bawah"
-            )
-
-            // Live Account Balance Calculation Preview ("Simulasi Hitungan Saldo Rekening")
-            val activeAcc = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
-            if (activeAcc != null) {
-                val currentAccBal = activeAcc.currentBalanceIdr
-                val projectedAccBal = when (selectedType) {
-                    TransactionType.INCOME, TransactionType.REFUND, TransactionType.ADJUSTMENT -> currentAccBal + parsedAmount
-                    TransactionType.EXPENSE, TransactionType.TRANSFER -> currentAccBal - parsedAmount
-                }
-                val deltaSign = when (selectedType) {
-                    TransactionType.INCOME, TransactionType.REFUND, TransactionType.ADJUSTMENT -> "+"
-                    TransactionType.EXPENSE, TransactionType.TRANSFER -> "-"
-                }
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
-                    shape = RoundedCornerShape(14.dp)
+            contentWindowInsets = WindowInsets.safeDrawing,
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 2.dp
                 ) {
                     Column(
-                        modifier = Modifier.padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text(
-                            text = "SIMULASI HITUNGAN SALDO REKENING (${activeAcc.name})",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = SapphireSecondary,
-                            fontWeight = FontWeight.Bold
-                        )
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Saldo Saat Ini", style = MaterialTheme.typography.bodySmall)
-                            Text(IdrFormatter.format(currentAccBal), style = TabularAmountRow)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                IconButton(
+                                    onClick = onDismiss,
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Icon(Icons.Default.Close, contentDescription = "Tutup")
+                                }
+                                Column {
+                                    Text(
+                                        text = if (editingTransaction == null) "Catat Transaksi" else "Edit Transaksi",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    val fullDateStamp = remember(editingTransaction) {
+                                        SimpleDateFormat("dd MMM yyyy • HH:mm WIB", Locale("id", "ID"))
+                                            .format(Date(editingTransaction?.transactionDateMillis ?: System.currentTimeMillis()))
+                                    }
+                                    Text(
+                                        text = fullDateStamp,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
+
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("Mutasi (${selectedType.labelId})", style = MaterialTheme.typography.bodySmall)
+                            TransactionType.entries.forEach { t ->
+                                FilterChip(
+                                    selected = selectedType == t,
+                                    onClick = {
+                                        selectedType = t
+                                        val firstMatching = categories.firstOrNull {
+                                            if (t == TransactionType.INCOME) it.type == TransactionType.INCOME else it.type == TransactionType.EXPENSE
+                                        }
+                                        if (firstMatching != null) selectedCategoryId = firstMatching.id
+                                    },
+                                    label = { Text(t.labelId, fontWeight = FontWeight.SemiBold) },
+                                    modifier = Modifier.testTag("tx_type_chip_${t.name}")
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            bottomBar = {
+                Surface(
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
+                        .navigationBarsPadding()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 18.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (validationError != null) {
                             Text(
-                                text = "$deltaSign${IdrFormatter.format(parsedAmount)}",
-                                style = TabularAmountRow,
-                                color = if (deltaSign == "+") EmeraldPrimary else RefinedRed
+                                text = validationError ?: "",
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Saldo Akhir Setelah Simpan", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
-                            Text(
-                                text = IdrFormatter.format(projectedAccBal),
-                                style = TabularBalanceMedium,
-                                color = if (projectedAccBal >= 0L) EmeraldPrimary else RefinedRed,
-                                fontWeight = FontWeight.ExtraBold
-                            )
+                            OutlinedButton(
+                                onClick = onDismiss,
+                                modifier = Modifier.height(50.dp)
+                            ) {
+                                Text("Batal")
+                            }
+                            Button(
+                                onClick = { submitTransaction() },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(50.dp)
+                                    .testTag("save_transaction_button"),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = accentColor,
+                                    contentColor = if (accentColor == RefinedRed) Color.White else Color(0xFF071119)
+                                ),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                Text(
+                                    text = if (parsedAmount > 0L) {
+                                        "Simpan • ${IdrFormatter.formatCompact(parsedAmount)}"
+                                    } else {
+                                        "Simpan Transaksi"
+                                    },
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
                         }
                     }
                 }
             }
-
-            val fullDateStamp = remember(editingTransaction) {
-                val fmt = SimpleDateFormat("EEEE, dd MMMM yyyy • HH:mm:ss 'WIB' ('Tahun' yyyy)", Locale("id", "ID"))
-                fmt.format(Date(editingTransaction?.transactionDateMillis ?: System.currentTimeMillis()))
-            }
-            Text(
-                text = "Waktu & Tahun Tercatat: $fullDateStamp",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
-            OutlinedTextField(
-                value = titleInput,
-                onValueChange = { titleInput = it },
-                label = { Text("Judul / Deskripsi Transaksi") },
-                modifier = Modifier.fillMaxWidth().testTag("tx_title_input"),
-                singleLine = true
-            )
-
-            // Account Selection
-            if (accounts.isNotEmpty()) {
-                Text("Rekening Sumber", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    accounts.forEach { acc ->
-                        FilterChip(
-                            selected = selectedAccountId == acc.id,
-                            onClick = { selectedAccountId = acc.id },
-                            label = { Text(acc.name) }
-                        )
-                    }
-                }
-            }
-
-            if (selectedType == TransactionType.TRANSFER && accounts.size > 1) {
-                Text("Rekening Tujuan Transfer", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    accounts.forEach { acc ->
-                        FilterChip(
-                            selected = selectedToAccountId == acc.id,
-                            onClick = { selectedToAccountId = acc.id },
-                            label = { Text(acc.name) }
-                        )
-                    }
-                }
-            }
-
-            // Category Selection
-            if (selectedType != TransactionType.TRANSFER && availableCategories.isNotEmpty()) {
-                Text("Kategori", style = MaterialTheme.typography.titleSmall)
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    availableCategories.forEach { cat ->
-                        FilterChip(
-                            selected = selectedCategoryId == cat.id,
-                            onClick = { selectedCategoryId = cat.id },
-                            label = { Text(cat.name) }
-                        )
-                    }
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = merchantInput,
-                    onValueChange = { merchantInput = it },
-                    label = { Text("Merchant / Klien (Opsional)") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = projectInput,
-                    onValueChange = { projectInput = it },
-                    label = { Text("Proyek / Cost Center") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-            }
-
-            OutlinedTextField(
-                value = notesInput,
-                onValueChange = { notesInput = it },
-                label = { Text("Catatan Tambahan (Opsional)") },
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            if (validationError != null) {
-                Text(
-                    text = validationError ?: "",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) { innerPadding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f).height(50.dp)
-                ) {
-                    Text("Batal")
-                }
-                Button(
-                    onClick = {
-                        if (parsedAmount <= 0L) {
-                            validationError = "Masukkan nominal lebih besar dari Rp0."
-                            return@Button
-                        }
-                        if (selectedType == TransactionType.TRANSFER && selectedAccountId == selectedToAccountId) {
-                            validationError = "Rekening asal dan tujuan transfer tidak boleh sama."
-                            return@Button
-                        }
-                        val chosenAcc = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
-                        val chosenToAcc = accounts.firstOrNull { it.id == selectedToAccountId }
-                        val chosenCat = categories.firstOrNull { it.id == selectedCategoryId }
-
-                        onSave(
-                            editingTransaction?.id,
-                            selectedType,
-                            parsedAmount,
-                            titleInput.ifBlank {
-                                if (selectedType == TransactionType.TRANSFER) "Transfer Antar Rekening" else (chosenCat?.name ?: "Transaksi")
-                            },
-                            if (selectedType == TransactionType.TRANSFER) "cat_transfer" else (chosenCat?.id ?: "cat_other"),
-                            if (selectedType == TransactionType.TRANSFER) "Transfer Internal" else (chosenCat?.name ?: "Lainnya"),
-                            chosenAcc?.id ?: "acc_default",
-                            chosenAcc?.name ?: "Tunai Utama",
-                            chosenToAcc?.id,
-                            chosenToAcc?.name,
-                            notesInput,
-                            merchantInput,
-                            projectInput
-                        )
+                // 1. Compact Seamless Nominal Counter
+                XynoosCurrencyNominalInput(
+                    value = amountInput,
+                    onValueChange = {
+                        amountInput = it
+                        validationError = null
                     },
-                    modifier = Modifier.weight(1f).height(50.dp).testTag("save_transaction_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = MaterialTheme.colorScheme.onPrimary
+                    label = "Nominal ${selectedType.labelId}",
+                    inputTestTag = "tx_amount_input",
+                    accentColor = accentColor,
+                    compactMode = true,
+                    helperSubtitle = "Ketik angka langsung (titik otomatis) atau tap chip cepat"
+                )
+
+                // 2. Title Input cleanly visible right below nominal
+                OutlinedTextField(
+                    value = titleInput,
+                    onValueChange = { titleInput = it },
+                    label = { Text("Judul / Keterangan Transaksi") },
+                    placeholder = {
+                        val example = if (selectedType == TransactionType.INCOME) {
+                            "Misal: Gaji Pekerjaan / Gaji PKL Bulan Ini"
+                        } else {
+                            "Misal: Beli Bensin Pertamax / Beli Jajan"
+                        }
+                        Text(example, style = MaterialTheme.typography.bodySmall)
+                    },
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                    modifier = Modifier.fillMaxWidth().testTag("tx_title_input"),
+                    singleLine = true,
+                    shape = RoundedCornerShape(14.dp)
+                )
+
+                // 3. Category Flow Chips (multi-row easy pick without scrolling narrow strips)
+                if (selectedType != TransactionType.TRANSFER && availableCategories.isNotEmpty()) {
+                    Text(
+                        text = "Pilih Kategori (${availableCategories.size})",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
                     )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        availableCategories.forEach { cat ->
+                            val isSelected = selectedCategoryId == cat.id
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { selectedCategoryId = cat.id },
+                                label = {
+                                    Text(
+                                        text = cat.name,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            )
+                        }
+                    }
+                }
+
+                // 4. Account Selection
+                if (accounts.isNotEmpty()) {
+                    Text(
+                        text = if (selectedType == TransactionType.INCOME) "Masuk ke Rekening" else "Rekening Sumber",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        accounts.forEach { acc ->
+                            FilterChip(
+                                selected = selectedAccountId == acc.id,
+                                onClick = { selectedAccountId = acc.id },
+                                label = {
+                                    Text("${acc.name} (${IdrFormatter.formatCompact(acc.currentBalanceIdr)})")
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (selectedType == TransactionType.TRANSFER && accounts.size > 1) {
+                    Text("Rekening Tujuan Transfer", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        accounts.forEach { acc ->
+                            FilterChip(
+                                selected = selectedToAccountId == acc.id,
+                                onClick = { selectedToAccountId = acc.id },
+                                label = { Text(acc.name) }
+                            )
+                        }
+                    }
+                }
+
+                // 5. Compact Live Account Balance Simulation
+                val activeAcc = accounts.firstOrNull { it.id == selectedAccountId } ?: accounts.firstOrNull()
+                if (activeAcc != null) {
+                    val currentAccBal = activeAcc.currentBalanceIdr
+                    val projectedAccBal = when (selectedType) {
+                        TransactionType.INCOME, TransactionType.REFUND, TransactionType.ADJUSTMENT -> currentAccBal + parsedAmount
+                        TransactionType.EXPENSE, TransactionType.TRANSFER -> currentAccBal - parsedAmount
+                    }
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(14.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Simulasi Saldo ${activeAcc.name}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = "Saat ini: ${IdrFormatter.format(currentAccBal)}",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = "Setelah Simpan",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = SapphireSecondary
+                                )
+                                Text(
+                                    text = IdrFormatter.format(projectedAccBal),
+                                    style = TabularBalanceMedium,
+                                    color = if (projectedAccBal >= 0L) EmeraldPrimary else RefinedRed,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 6. Collapsible Optional Business / Notes section
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .clickable { showOptionalDetails = !showOptionalDetails }
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Simpan Transaksi")
+                    Text(
+                        text = "Detail Tambahan (Merchant, Proyek, Catatan)",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = SapphireSecondary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Icon(
+                        imageVector = if (showOptionalDetails) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "Toggle Detail Tambahan",
+                        tint = SapphireSecondary
+                    )
+                }
+
+                AnimatedVisibility(visible = showOptionalDetails) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedTextField(
+                                value = merchantInput,
+                                onValueChange = { merchantInput = it },
+                                label = { Text("Merchant / Klien") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = projectInput,
+                                onValueChange = { projectInput = it },
+                                label = { Text("Proyek / Cost Center") },
+                                modifier = Modifier.weight(1f),
+                                singleLine = true
+                            )
+                        }
+                        OutlinedTextField(
+                            value = notesInput,
+                            onValueChange = { notesInput = it },
+                            label = { Text("Catatan Tambahan (Opsional)") },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
-            Spacer(modifier = Modifier.height(20.dp))
         }
     }
 }

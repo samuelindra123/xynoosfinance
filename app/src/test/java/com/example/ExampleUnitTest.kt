@@ -278,7 +278,7 @@ class ExampleUnitTest {
         assertNotNull(draft)
         assertEquals(TransactionType.EXPENSE, draft?.type)
         assertEquals(35_000L, draft?.amountIdr)
-        assertEquals("Makanan & Minuman", draft?.categoryName)
+        assertEquals("Beli Makanan & Lauk", draft?.categoryName)
         assertTrue(draft!!.accountName.contains("Tunai", ignoreCase = true))
     }
 
@@ -308,6 +308,190 @@ class ExampleUnitTest {
         assertEquals("Lima Belas Juta Dua Ratus Lima Puluh Ribu Rupiah", IdrFormatter.formatTerbilang(15_250_000L))
         assertEquals("JUTAAN (Jt) • 8 Digit", IdrFormatter.formatNominalScaleBadge(15_250_000L))
         assertEquals("15 Juta + 250 Ribu", IdrFormatter.formatDigitBreakdown(15_250_000L))
+    }
+
+    @Test
+    fun monthlyAndAnnualLedgerSummaries_computeTypeAndCategoryAndYearlyTotals() {
+        val bca = FinancialAccountModel(
+            id = "acc_bca",
+            userId = "u1",
+            name = "BCA",
+            accountType = AccountType.BANK,
+            openingBalanceIdr = 10_000_000L,
+            currentBalanceIdr = 10_000_000L,
+            colorHex = "#49E0A0"
+        )
+        val gopay = FinancialAccountModel(
+            id = "acc_gopay",
+            userId = "u1",
+            name = "GoPay",
+            accountType = AccountType.EWALLET,
+            openingBalanceIdr = 500_000L,
+            currentBalanceIdr = 500_000L,
+            colorHex = "#72A7FF"
+        )
+        val cats = DefaultCategories.getDefaults("u1")
+
+        fun millisFor(year: Int, monthZeroBased: Int, day: Int): Long {
+            return java.util.Calendar.getInstance().apply {
+                set(year, monthZeroBased, day, 10, 0, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+            }.timeInMillis
+        }
+
+        val txs = listOf(
+            TransactionModel(
+                id = "jan_inc",
+                userId = "u1",
+                type = TransactionType.INCOME,
+                amountIdr = 12_000_000L,
+                title = "Gaji Januari",
+                categoryId = "cat_salary",
+                categoryName = "Gaji Utama",
+                accountId = "acc_bca",
+                accountName = "BCA",
+                transactionDateMillis = millisFor(2026, 0, 5)
+            ),
+            TransactionModel(
+                id = "jan_exp",
+                userId = "u1",
+                type = TransactionType.EXPENSE,
+                amountIdr = 3_000_000L,
+                title = "Belanja Januari",
+                categoryId = "cat_food",
+                categoryName = "Makanan & Minuman",
+                accountId = "acc_bca",
+                accountName = "BCA",
+                transactionDateMillis = millisFor(2026, 0, 12)
+            ),
+            TransactionModel(
+                id = "jan_trf",
+                userId = "u1",
+                type = TransactionType.TRANSFER,
+                amountIdr = 1_000_000L,
+                title = "Topup GoPay",
+                categoryId = "cat_transfer",
+                categoryName = "Transfer Internal",
+                accountId = "acc_bca",
+                accountName = "BCA",
+                toAccountId = "acc_gopay",
+                toAccountName = "GoPay",
+                transactionDateMillis = millisFor(2026, 0, 15)
+            ),
+            TransactionModel(
+                id = "mar_exp",
+                userId = "u1",
+                type = TransactionType.EXPENSE,
+                amountIdr = 2_000_000L,
+                title = "Tagihan Maret",
+                categoryId = "cat_bills",
+                categoryName = "Tagihan & Utilitas",
+                accountId = "acc_gopay",
+                accountName = "GoPay",
+                transactionDateMillis = millisFor(2026, 2, 10)
+            ),
+            TransactionModel(
+                id = "mar_ref",
+                userId = "u1",
+                type = TransactionType.REFUND,
+                amountIdr = 500_000L,
+                title = "Cashback Tagihan",
+                categoryId = "cat_bills",
+                categoryName = "Tagihan & Utilitas",
+                accountId = "acc_gopay",
+                accountName = "GoPay",
+                transactionDateMillis = millisFor(2026, 2, 11)
+            )
+        )
+
+        val janSummary = FinancialCalculator.calculateMonthlyLedgerSummary(
+            year = 2026,
+            monthIndex = 0,
+            allTransactions = txs,
+            categories = cats,
+            budgets = emptyList()
+        )
+        assertEquals("Januari 2026", janSummary.monthLabel)
+        assertEquals(12_000_000L, janSummary.incomeIdr)
+        assertEquals(3_000_000L, janSummary.netExpenseIdr)
+        assertEquals(1_000_000L, janSummary.transferIdr)
+        assertEquals(9_000_000L, janSummary.netCashFlowIdr)
+        assertEquals(3, janSummary.transactionCount)
+        assertEquals(1, janSummary.incomeCategoryBreakdown.size)
+
+        val annualSummary = FinancialCalculator.calculateAnnualLedgerSummary(
+            year = 2026,
+            allTransactions = txs,
+            categories = cats,
+            budgets = emptyList()
+        )
+        assertEquals(12, annualSummary.monthlyBreakdown.size)
+        assertEquals(12_000_000L, annualSummary.totalIncomeIdr)
+        // Jan 3M + Mar (2M - 500k refund = 1.5M) = 4.5M
+        assertEquals(4_500_000L, annualSummary.totalNetExpenseIdr)
+        assertEquals(7_500_000L, annualSummary.netCashFlowIdr)
+        assertEquals(5, annualSummary.transactionCount)
+
+        val activities = FinancialCalculator.calculateAccountActivities(listOf(bca, gopay), txs)
+        val bcaAct = activities.first { it.account.id == "acc_bca" }
+        val gopayAct = activities.first { it.account.id == "acc_gopay" }
+        assertEquals(12_000_000L, bcaAct.inflowIdr)
+        assertEquals(4_000_000L, bcaAct.outflowIdr) // 3M expense + 1M transfer out
+        assertEquals(1_500_000L, gopayAct.inflowIdr) // 1M transfer in + 500k refund
+        assertEquals(2_000_000L, gopayAct.outflowIdr)
+    }
+
+    @Test
+    fun creativeCategoriesAndAiParsing_matchRequestedIndonesianCategories() {
+        val cats = DefaultCategories.getDefaults("u1")
+        val names = cats.map { it.name }.toSet()
+        assertTrue("Gaji Pekerjaan" in names)
+        assertTrue("Gaji PKL / Magang" in names)
+        assertTrue("Gaji Lain" in names)
+        assertTrue("Beli Makanan & Lauk" in names)
+        assertTrue("Beli Jajan & Camilan" in names)
+        assertTrue("Beli Bensin & BBM" in names)
+        assertTrue(cats.size >= 30)
+
+        val assistant = GroundedAiAssistant()
+        val accounts = listOf(
+            FinancialAccountModel(
+                id = "acc_bca",
+                userId = "u1",
+                name = "BCA",
+                accountType = AccountType.BANK,
+                openingBalanceIdr = 1_000_000L,
+                currentBalanceIdr = 1_000_000L,
+                colorHex = "#49E0A0"
+            )
+        )
+        val pklDraft = assistant.parseNaturalTransactionDraft("Terima gaji PKL 1,5 juta ke BCA", accounts, cats)
+        assertNotNull(pklDraft)
+        assertEquals(TransactionType.INCOME, pklDraft?.type)
+        assertEquals(1_500_000L, pklDraft?.amountIdr)
+        assertEquals("Gaji PKL / Magang", pklDraft?.categoryName)
+
+        val fuelDraft = assistant.parseNaturalTransactionDraft("Beli bensin pertamax 50 ribu", accounts, cats)
+        assertNotNull(fuelDraft)
+        assertEquals(TransactionType.EXPENSE, fuelDraft?.type)
+        assertEquals(50_000L, fuelDraft?.amountIdr)
+        assertEquals("Beli Bensin & BBM", fuelDraft?.categoryName)
+
+        val snackDraft = assistant.parseNaturalTransactionDraft("Beli jajan seblak 25rb", accounts, cats)
+        assertNotNull(snackDraft)
+        assertEquals("Beli Jajan & Camilan", snackDraft?.categoryName)
+    }
+
+    @Test
+    fun patternLockUtil_hashesVerifiesAndInterpolatesMidpointsCorrectly() {
+        val pattern = listOf(0, 1, 2, 5, 8)
+        val hash = com.example.ui.components.PatternLockUtil.hashPattern(pattern)
+        assertEquals(64, hash.length)
+        assertTrue(com.example.ui.components.PatternLockUtil.verifyPattern(pattern, hash))
+        assertTrue(!com.example.ui.components.PatternLockUtil.verifyPattern(listOf(0, 1, 2, 4, 8), hash))
+        assertEquals(1, com.example.ui.components.PatternLockUtil.resolveIntermediateDot(0, 2))
+        assertEquals(4, com.example.ui.components.PatternLockUtil.resolveIntermediateDot(0, 8))
+        assertEquals(null, com.example.ui.components.PatternLockUtil.resolveIntermediateDot(0, 5))
     }
 }
 

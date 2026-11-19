@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -33,10 +34,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
@@ -45,17 +48,20 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SuggestionChip
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,7 +81,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.example.domain.AllocationRuleType
 import com.example.domain.BudgetAlertLevel
 import com.example.domain.BudgetProgressSummary
@@ -110,9 +120,21 @@ fun GoalsAndBudgetsScreen(
     onContributeGoal: (goalId: String, amountIdr: Long, type: ContributionType, notes: String) -> Unit,
     onDeleteGoal: (String) -> Unit,
     onCreateBudget: (name: String, categoryId: String, categoryName: String, limitAmountIdr: Long) -> Unit,
-    onDeleteBudget: (String) -> Unit
+    onDeleteBudget: (String) -> Unit,
+    onSelectAnalyticsYear: (Int) -> Unit = {},
+    onSelectAnalyticsMonth: (Int) -> Unit = {},
+    onSelectAnalyticsYearMonth: (Int, Int) -> Unit = { _, _ -> },
+    onAnalyticsSearchChange: (String) -> Unit = {},
+    onAnalyticsTypeFilterChange: (TransactionType?) -> Unit = {},
+    onAnalyticsCategoryFilterChange: (String?) -> Unit = {},
+    onSelectTransaction: (com.example.domain.TransactionModel) -> Unit = {},
+    onOpenAddTransaction: (TransactionType) -> Unit = {},
+    onGenerateDetailedPdf: (com.example.export.PdfReportConfig) -> Unit = {},
+    onGenerateStatusImage: () -> Unit = {},
+    onSendWhatsAppReport: () -> Unit = {},
+    onOpenDedicatedAnalyticsPage: () -> Unit = {}
 ) {
-    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0 = Goals, 1 = Budgets
+    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0 = Goals, 1 = Budgets, 2 = Rekap Bulanan & Tahunan
     var showCreateGoalDialog by remember { mutableStateOf(false) }
     var showCreateBudgetDialog by remember { mutableStateOf(false) }
     var activeContributionGoal by remember { mutableStateOf<FinancialGoalModel?>(null) }
@@ -130,25 +152,44 @@ fun GoalsAndBudgetsScreen(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
-                text = if (selectedSubTab == 0) "Target Tabungan" else "Anggaran Cerdas",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Button(
-                onClick = {
-                    if (selectedSubTab == 0) showCreateGoalDialog = true else showCreateBudgetDialog = true
+                text = when (selectedSubTab) {
+                    0 -> "Target Tabungan"
+                    1 -> "Anggaran Cerdas"
+                    else -> "Rekap Bulanan & Tahunan"
                 },
-                modifier = Modifier.testTag("create_goal_or_budget_button")
-            ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(if (selectedSubTab == 0) "Target Baru" else "Anggaran Baru")
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
+            )
+            if (selectedSubTab == 2) {
+                OutlinedButton(
+                    onClick = onOpenDedicatedAnalyticsPage,
+                    modifier = Modifier.testTag("open_full_analytics_page_button")
+                ) {
+                    Text("Layar Penuh")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        if (selectedSubTab == 0) showCreateGoalDialog = true else showCreateBudgetDialog = true
+                    },
+                    modifier = Modifier.testTag("create_goal_or_budget_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(if (selectedSubTab == 0) "Target Baru" else "Anggaran Baru")
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
 
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
             FilterChip(
                 selected = selectedSubTab == 0,
                 onClick = { selectedSubTab = 0 },
@@ -158,8 +199,14 @@ fun GoalsAndBudgetsScreen(
             FilterChip(
                 selected = selectedSubTab == 1,
                 onClick = { selectedSubTab = 1 },
-                label = { Text("Anggaran Bulanan (${uiState.budgets.size})") },
+                label = { Text("Anggaran (${uiState.budgets.size})") },
                 modifier = Modifier.testTag("tab_budgets_chip")
+            )
+            FilterChip(
+                selected = selectedSubTab == 2,
+                onClick = { selectedSubTab = 2 },
+                label = { Text("Rekap Bulanan & Tahunan") },
+                modifier = Modifier.testTag("tab_monthly_annual_chip")
             )
         }
 
@@ -325,8 +372,38 @@ fun GoalsAndBudgetsScreen(
                     }
                 }
             }
-        } else {
+        } else if (selectedSubTab == 1) {
             // Smart Budgets View
+            Card(
+                onClick = { selectedSubTab = 2 },
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().testTag("open_monthly_annual_from_budgets_card")
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "📊 Lihat Rekap Masuk, Keluar & Daftar Transaksi Bulanan/Tahunan",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = EmeraldPrimary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${uiState.monthlyLedgerSummary.monthLabel}: Masuk ${IdrFormatter.formatCompact(uiState.monthlyLedgerSummary.incomeIdr, isPrivacy)} • Abis ${IdrFormatter.formatCompact(uiState.monthlyLedgerSummary.netExpenseIdr, isPrivacy)}",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    TextButton(onClick = { selectedSubTab = 2 }) {
+                        Text("Buka")
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.height(10.dp))
+
             if (uiState.budgetSummaries.isEmpty()) {
                 XynoosEmptyStateCard(
                     title = "Belum Ada Anggaran Aktif",
@@ -348,6 +425,21 @@ fun GoalsAndBudgetsScreen(
                     }
                 }
             }
+        } else {
+            MonthlyAnnualBudgetPanel(
+                uiState = uiState,
+                onSelectYear = onSelectAnalyticsYear,
+                onSelectMonth = onSelectAnalyticsMonth,
+                onSelectYearMonth = onSelectAnalyticsYearMonth,
+                onSearchChange = onAnalyticsSearchChange,
+                onTypeFilterChange = onAnalyticsTypeFilterChange,
+                onCategoryFilterChange = onAnalyticsCategoryFilterChange,
+                onSelectTransaction = onSelectTransaction,
+                onOpenAddTransaction = onOpenAddTransaction,
+                onGenerateDetailedPdf = onGenerateDetailedPdf,
+                onGenerateStatusImage = onGenerateStatusImage,
+                onSendWhatsAppReport = onSendWhatsAppReport
+            )
         }
     }
 
@@ -729,13 +821,18 @@ private fun CreateBudgetDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AiAssistantScreen(
     uiState: XynoosUiState,
     onSendPrompt: (String) -> Unit,
     onConfirmDraft: (ProposedTransactionDraft) -> Unit,
     onDismissDraft: () -> Unit,
-    onClearHistory: () -> Unit
+    onClearHistory: () -> Unit,
+    onSelectSession: (String) -> Unit = {},
+    onCreateNewSession: () -> Unit = onClearHistory,
+    onRenameSession: (String, String) -> Unit = { _, _ -> },
+    onDeleteSession: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -744,14 +841,21 @@ fun AiAssistantScreen(
     val isKeyboardOpen = imeBottomPx > 0
     val listState = rememberLazyListState()
     var inputPrompt by rememberSaveable { mutableStateOf("") }
+    var showSessionsSheet by remember { mutableStateOf(false) }
+    var renamingSessionId by remember { mutableStateOf<String?>(null) }
+    var renameTextInput by remember { mutableStateOf("") }
+
+    val activeSession = uiState.aiSessions.firstOrNull { it.id == uiState.activeAiSessionId }
+        ?: uiState.aiSessions.firstOrNull()
 
     val suggestedPrompts = listOf(
+        "Audit keuangan saya bulan & tahun ini",
+        "Beli bensin pertamax 50rb pakai cash",
+        "Beli jajan 20rb pakai tunai",
+        "Terima gaji PKL 1.5 juta ke BCA",
         "Berapa saldo saya dalam USD hari ini?",
-        "Bagaimana strategi investasi & dana darurat?",
-        "Bayar makan siang 35 ribu pakai cash.",
-        "Berapa total pengeluaran bulan ini?",
-        "Kategori apa yang paling banyak menghabiskan uang?",
-        "Kalau saya menabung Rp500.000 per bulan, kapan target saya tercapai?"
+        "Evaluasi anggaran jajan & makan saya",
+        "Kalau menabung Rp500.000/bulan kapan target tercapai?"
     )
 
     // Auto-scroll to latest message whenever a message arrives, AI starts loading, or keyboard opens
@@ -768,13 +872,17 @@ fun AiAssistantScreen(
             .padding(horizontal = 16.dp, vertical = 10.dp)
             .testTag("ai_assistant_screen")
     ) {
-        // Compact Top Bar
+        // Compact Top Bar + Session Controls
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
                 Box(
                     modifier = Modifier
                         .size(34.dp)
@@ -784,22 +892,46 @@ fun AiAssistantScreen(
                 ) {
                     Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = EmeraldPrimary, modifier = Modifier.size(18.dp))
                 }
-                Column {
-                    Text("Xynoos AI Advisor & Tanya Jawab", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = activeSession?.title ?: "Xynoos AI Advisor",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     if (!isKeyboardOpen) {
                         Text(
-                            text = "Tanya Jawab Bebas • Buku Besar & Kurs USD (${IdrFormatter.format(uiState.usdMarket.currentRateIdr.toLong())})",
+                            text = "Tersimpan Otomatis • Kurs USD ${IdrFormatter.format(uiState.usdMarket.currentRateIdr.toLong())}",
                             style = MaterialTheme.typography.labelSmall,
-                            color = EmeraldPrimary
+                            color = EmeraldPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
-            IconButton(
-                onClick = onClearHistory,
-                modifier = Modifier.testTag("clear_ai_history_button")
-            ) {
-                Icon(Icons.Default.DeleteSweep, contentDescription = "Bersihkan Riwayat Chat")
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = { showSessionsSheet = true },
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.height(34.dp).testTag("ai_sessions_button"),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.History, contentDescription = null, modifier = Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Sesi (${uiState.aiSessions.size.coerceAtLeast(1)})", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                }
+                IconButton(
+                    onClick = onCreateNewSession,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(EmeraldPrimary.copy(alpha = 0.16f))
+                        .testTag("clear_ai_history_button")
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = "Sesi Chat Baru", tint = EmeraldPrimary, modifier = Modifier.size(18.dp))
+                }
             }
         }
 
@@ -934,7 +1066,7 @@ fun AiAssistantScreen(
                     onValueChange = { inputPrompt = it },
                     placeholder = {
                         Text(
-                            "Ketik pesan atau transaksi (misal: Bayar makan siang 35 ribu pakai cash)",
+                            "Tanya saran atau ketik transaksi (misal: Beli bensin 50rb pakai cash)",
                             style = MaterialTheme.typography.bodySmall
                         )
                     },
@@ -980,6 +1112,154 @@ fun AiAssistantScreen(
                 }
             }
         }
+    }
+
+    if (showSessionsSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = { showSessionsSheet = false },
+            sheetState = sheetState,
+            containerColor = MaterialTheme.colorScheme.surface
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Sesi Percakapan Xynoos AI", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text("Semua obrolan tersimpan aman per sesi di perangkat", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Button(
+                        onClick = {
+                            onCreateNewSession()
+                            showSessionsSheet = false
+                        }
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Sesi Baru")
+                    }
+                }
+
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(340.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(uiState.aiSessions, key = { it.id }) { session ->
+                        val isActive = session.id == uiState.activeAiSessionId
+                        val dateText = remember(session.updatedAtMillis) {
+                            SimpleDateFormat("dd MMM HH:mm", Locale("id", "ID")).format(Date(session.updatedAtMillis))
+                        }
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onSelectSession(session.id)
+                                    showSessionsSheet = false
+                                }
+                                .then(
+                                    if (isActive) Modifier.border(1.5.dp, EmeraldPrimary, RoundedCornerShape(14.dp))
+                                    else Modifier
+                                ),
+                            colors = CardDefaults.cardColors(
+                                containerColor = if (isActive) EmeraldPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                            ),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(
+                                    Icons.Default.ChatBubbleOutline,
+                                    contentDescription = null,
+                                    tint = if (isActive) EmeraldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = session.title,
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = session.lastMessagePreview.ifBlank { "Belum ada pesan" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "$dateText • ${session.messageCount} pesan",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (isActive) EmeraldPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(
+                                    onClick = {
+                                        renamingSessionId = session.id
+                                        renameTextInput = session.title
+                                    },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = "Ubah Nama Sesi", modifier = Modifier.size(16.dp))
+                                }
+                                IconButton(
+                                    onClick = { onDeleteSession(session.id) },
+                                    modifier = Modifier.size(34.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Hapus Sesi", tint = RefinedRed, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+        }
+    }
+
+    if (renamingSessionId != null) {
+        AlertDialog(
+            onDismissRequest = { renamingSessionId = null },
+            title = { Text("Ubah Nama Sesi Chat") },
+            text = {
+                OutlinedTextField(
+                    value = renameTextInput,
+                    onValueChange = { renameTextInput = it },
+                    label = { Text("Judul Sesi") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val id = renamingSessionId
+                    if (id != null && renameTextInput.isNotBlank()) {
+                        onRenameSession(id, renameTextInput)
+                    }
+                    renamingSessionId = null
+                }) {
+                    Text("Simpan")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { renamingSessionId = null }) {
+                    Text("Batal")
+                }
+            }
+        )
     }
 }
 

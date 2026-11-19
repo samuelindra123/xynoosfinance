@@ -30,13 +30,17 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BusinessCenter
+import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Pattern
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -76,12 +80,15 @@ import com.example.domain.IdrFormatter
 import com.example.domain.InvoiceReferenceModel
 import com.example.domain.InvoiceStatus
 import com.example.domain.InvoiceType
+import com.example.domain.TransactionModel
 import com.example.domain.TransactionType
 import com.example.export.PdfReportConfig
 import com.example.export.PdfReportGenerator
+import com.example.export.PdfReportScope
 import com.example.export.StatusImageExporter
 import com.example.notifications.ReminderNotificationHelper
 import com.example.notifications.WhatsAppNotifierHelper
+import com.example.ui.components.SetupPatternLockDialog
 import com.example.ui.components.StockMarketCandlestickChart
 import com.example.ui.components.XynoosCurrencyNominalInput
 import com.example.ui.theme.EmeraldPrimary
@@ -91,9 +98,13 @@ import com.example.ui.theme.TabularAmountRow
 import com.example.ui.theme.TabularBalanceMedium
 import com.example.ui.theme.WarmAmber
 import com.example.ui.viewmodel.XynoosUiState
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 enum class MoreSectionDestination {
     HUB,
+    MONTHLY_ANNUAL_ANALYTICS,
     USD_LIVE_MARKET,
     ACCOUNTS,
     BUSINESS,
@@ -121,10 +132,20 @@ fun MoreSectionScreen(
     onUpdateReportIdentity: (String, String, String, String, String) -> Unit,
     onSetThemeMode: (AppThemeMode) -> Unit,
     onTogglePrivacyMode: () -> Unit,
-    onUpdateReminders: (Boolean, Int, Int, Boolean) -> Unit,
+    onUpdateReminders: (Boolean, Int, Int, Boolean, Boolean, Boolean) -> Unit,
+    onUpdateAutoBackupEnabled: (Boolean) -> Unit = {},
+    onUpdatePatternLock: (Boolean, String, Boolean) -> Unit = { _, _, _ -> },
     onSyncCloudNow: () -> Unit,
     onSignOut: () -> Unit,
-    onDeleteAccountAndData: () -> Unit
+    onDeleteAccountAndData: () -> Unit,
+    onSelectAnalyticsYear: (Int) -> Unit = {},
+    onSelectAnalyticsMonth: (Int) -> Unit = {},
+    onSelectAnalyticsYearMonth: (Int, Int) -> Unit = { _, _ -> },
+    onAnalyticsSearchChange: (String) -> Unit = {},
+    onAnalyticsTypeFilterChange: (TransactionType?) -> Unit = {},
+    onAnalyticsCategoryFilterChange: (String?) -> Unit = {},
+    onSelectTransaction: (TransactionModel) -> Unit = {},
+    onOpenAddTransaction: (TransactionType) -> Unit = {}
 ) {
     var currentSubScreen by rememberSaveable(initialDestination) { mutableStateOf(initialDestination) }
 
@@ -140,6 +161,23 @@ fun MoreSectionScreen(
                 uiState = uiState,
                 onNavigate = { currentSubScreen = it },
                 onSendWhatsAppQuick = { onSendWhatsAppNow(null) }
+            )
+        }
+        MoreSectionDestination.MONTHLY_ANNUAL_ANALYTICS -> {
+            MonthlyAnnualBudgetSubScreen(
+                uiState = uiState,
+                onBack = { currentSubScreen = MoreSectionDestination.HUB },
+                onSelectYear = onSelectAnalyticsYear,
+                onSelectMonth = onSelectAnalyticsMonth,
+                onSelectYearMonth = onSelectAnalyticsYearMonth,
+                onSearchChange = onAnalyticsSearchChange,
+                onTypeFilterChange = onAnalyticsTypeFilterChange,
+                onCategoryFilterChange = onAnalyticsCategoryFilterChange,
+                onSelectTransaction = onSelectTransaction,
+                onOpenAddTransaction = onOpenAddTransaction,
+                onGenerateDetailedPdf = onGeneratePdf,
+                onGenerateStatusImage = { onGenerateStatusImage(true) },
+                onSendWhatsAppReport = { onSendWhatsAppNow(null) }
             )
         }
         MoreSectionDestination.USD_LIVE_MARKET -> {
@@ -191,6 +229,8 @@ fun MoreSectionScreen(
                 onSetThemeMode = onSetThemeMode,
                 onTogglePrivacyMode = onTogglePrivacyMode,
                 onUpdateReminders = onUpdateReminders,
+                onUpdateAutoBackupEnabled = onUpdateAutoBackupEnabled,
+                onUpdatePatternLock = onUpdatePatternLock,
                 onUpdateWhatsAppSettings = onUpdateWhatsAppSettings,
                 onSendWhatsAppNow = onSendWhatsAppNow,
                 onSyncCloudNow = onSyncCloudNow,
@@ -221,6 +261,17 @@ private fun MoreHubMenu(
                 "Akses terminal grafik kurs Dollar (USD) per menit, ekspor gambar status & PDF, notifikasi WhatsApp gratis, dan pusat bisnis.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        item {
+            MoreMenuCard(
+                title = "Anggaran, Pemasukan & Rekap Bulanan/Tahunan",
+                subtitle = "Cari & filter transaksi per jenis/bulan (${uiState.monthlyLedgerSummary.monthLabel}) + Rekap masuk & abis Tahun ${uiState.analyticsYear}",
+                icon = Icons.Default.CalendarMonth,
+                accent = EmeraldPrimary,
+                testTag = "menu_monthly_annual_card",
+                onClick = { onNavigate(MoreSectionDestination.MONTHLY_ANNUAL_ANALYTICS) }
             )
         }
 
@@ -656,20 +707,47 @@ private fun PdfExportCenterSubScreen(
     onUpdateReportIdentity: (String, String, String, String, String) -> Unit
 ) {
     val context = LocalContext.current
-    var reportTitle by rememberSaveable { mutableStateOf("Laporan Eksekutif Keuangan & Buku Besar") }
+    var reportScope by rememberSaveable { mutableStateOf(PdfReportScope.SELECTED_MONTH) }
+    var reportTitle by rememberSaveable { mutableStateOf("Laporan Eksekutif Keuangan Rinci & Buku Besar") }
     var orgName by rememberSaveable { mutableStateOf(uiState.prefs.reportOrgName) }
     var orgAddress by rememberSaveable { mutableStateOf(uiState.prefs.reportOrgAddress) }
     var contactInfo by rememberSaveable { mutableStateOf(uiState.prefs.reportContactInfo) }
     var signatory by rememberSaveable { mutableStateOf(uiState.prefs.reportSignatory.ifBlank { uiState.prefs.displayName }) }
     var footerText by rememberSaveable { mutableStateOf(uiState.prefs.reportFooterText) }
     var customNotes by rememberSaveable {
-        mutableStateOf("Seluruh angka dalam dokumen ini bersumber dari kueri repositori terverifikasi di XynoosFinance.")
+        mutableStateOf("Seluruh angka dan rincian dalam dokumen ini bersumber dari kueri repositori terverifikasi di XynoosFinance.")
+    }
+
+    val scopeIncome = when (reportScope) {
+        PdfReportScope.SELECTED_MONTH -> uiState.monthlyLedgerSummary.incomeIdr
+        PdfReportScope.FULL_YEAR -> uiState.annualLedgerSummary.totalIncomeIdr
+        PdfReportScope.DASHBOARD_PERIOD -> uiState.overview.periodIncomeIdr
+    }
+    val scopeExpense = when (reportScope) {
+        PdfReportScope.SELECTED_MONTH -> uiState.monthlyLedgerSummary.netExpenseIdr
+        PdfReportScope.FULL_YEAR -> uiState.annualLedgerSummary.totalNetExpenseIdr
+        PdfReportScope.DASHBOARD_PERIOD -> uiState.overview.periodExpenseIdr
+    }
+    val scopeTxCount = when (reportScope) {
+        PdfReportScope.SELECTED_MONTH -> uiState.monthlyLedgerSummary.transactionCount
+        PdfReportScope.FULL_YEAR -> uiState.annualLedgerSummary.transactionCount
+        PdfReportScope.DASHBOARD_PERIOD -> uiState.periodTransactions.size
+    }
+    val scopeCategories = when (reportScope) {
+        PdfReportScope.SELECTED_MONTH -> uiState.monthlyLedgerSummary.expenseCategoryBreakdown
+        PdfReportScope.FULL_YEAR -> uiState.annualLedgerSummary.expenseCategoryBreakdown
+        PdfReportScope.DASHBOARD_PERIOD -> uiState.categoryBreakdown
+    }
+    val scopeLabel = when (reportScope) {
+        PdfReportScope.SELECTED_MONTH -> uiState.monthlyLedgerSummary.monthLabel
+        PdfReportScope.FULL_YEAR -> "Tahun ${uiState.analyticsYear}"
+        PdfReportScope.DASHBOARD_PERIOD -> uiState.selectedPeriod.labelId
     }
 
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp).testTag("pdf_export_subscreen")
     ) {
-        SubScreenTopBar(title = "Ekspor Gambar Status & PDF", onBack = onBack)
+        SubScreenTopBar(title = "Ekspor Laporan Rinci & Status", onBack = onBack)
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -684,21 +762,21 @@ private fun PdfExportCenterSubScreen(
                 ) {
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "KARTU STATUS LAPORAN KEUANGAN KEREN (PNG HIGH-RES)",
+                            text = "KARTU STATUS LAPORAN KEUANGAN RINCI (PNG HIGH-RES)",
                             style = MaterialTheme.typography.labelSmall,
                             color = EmeraldPrimary,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Ekspor Gambar Status Kekayaan, Grafik Saham USD 1m & Target Tabungan",
+                            text = "Ekspor Gambar Status Kekayaan, Grafik USD 1m, Rincian Kategori & Rekap Tahunan",
                             style = MaterialTheme.typography.titleMedium,
                             color = Color(0xFFF4F7FB),
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "• Total Kekayaan: ${IdrFormatter.format(uiState.overview.netWorthIdr)} (≈ ${IdrFormatter.formatUsdFromIdr(uiState.overview.netWorthIdr, uiState.usdMarket.currentRateIdr)})\n" +
-                                "• Kas Tersedia: ${IdrFormatter.format(uiState.overview.availableCashIdr)} (≈ ${IdrFormatter.formatUsdFromIdr(uiState.overview.availableCashIdr, uiState.usdMarket.currentRateIdr)})\n" +
-                                "• Target Tabungan Auto-Saldo: ${uiState.overview.savingsProgressPercent}%",
+                            text = "• Kekayaan Bersih: ${IdrFormatter.format(uiState.overview.netWorthIdr)} (≈ ${IdrFormatter.formatUsdFromIdr(uiState.overview.netWorthIdr, uiState.usdMarket.currentRateIdr)})\n" +
+                                "• Rekap Tahun ${uiState.analyticsYear}: Masuk ${IdrFormatter.formatCompact(uiState.annualLedgerSummary.totalIncomeIdr)} | Abis ${IdrFormatter.formatCompact(uiState.annualLedgerSummary.totalNetExpenseIdr)}\n" +
+                                "• Rincian Kategori & Saldo Rekening disertakan otomatis",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF98A3B3)
                         )
@@ -735,7 +813,31 @@ private fun PdfExportCenterSubScreen(
                 }
             }
 
-            // 2. Live Print-Friendly Document Preview Card (A4 PDF)
+            // 2. Scope Selector for Detailed PDF
+            item {
+                Text("Pilih Cakupan Periode Laporan PDF Rinci", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    PdfReportScope.entries.forEach { scope ->
+                        val chipLabel = when (scope) {
+                            PdfReportScope.SELECTED_MONTH -> "Bulan: ${uiState.monthlyLedgerSummary.monthLabel}"
+                            PdfReportScope.FULL_YEAR -> "Tahunan: ${uiState.analyticsYear}"
+                            PdfReportScope.DASHBOARD_PERIOD -> "Dashboard: ${uiState.selectedPeriod.labelId}"
+                        }
+                        FilterChip(
+                            selected = reportScope == scope,
+                            onClick = { reportScope = scope },
+                            label = { Text(chipLabel) },
+                            modifier = Modifier.testTag("pdf_scope_chip_${scope.name}")
+                        )
+                    }
+                }
+            }
+
+            // 3. Detailed Live Document Preview Card (A4 PDF)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("pdf_preview_card"),
@@ -744,20 +846,21 @@ private fun PdfExportCenterSubScreen(
                 ) {
                     Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(
-                            text = "PRATINJAU DOKUMEN CETAK A4 — ${orgName.uppercase()}",
+                            text = "PRATINJAU LAPORAN RINCI A4 — ${orgName.uppercase()}",
                             style = MaterialTheme.typography.labelSmall,
                             color = Color(0xFF0B8A56),
                             fontWeight = FontWeight.Bold
                         )
                         Text(reportTitle, style = MaterialTheme.typography.titleMedium, color = Color(0xFF0D141F), fontWeight = FontWeight.Bold)
-                        Text("$orgAddress • $contactInfo", style = MaterialTheme.typography.labelSmall, color = Color(0xFF4F5D73))
+                        Text("Cakupan: $scopeLabel • $orgAddress • $contactInfo", style = MaterialTheme.typography.labelSmall, color = Color(0xFF4F5D73))
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "• Kas Tersedia: ${IdrFormatter.format(uiState.overview.availableCashIdr)}\n" +
-                                "• Kekayaan Bersih: ${IdrFormatter.format(uiState.overview.netWorthIdr)}\n" +
-                                "• Pemasukan (${uiState.selectedPeriod.labelId}): ${IdrFormatter.format(uiState.overview.periodIncomeIdr)}\n" +
-                                "• Pengeluaran (${uiState.selectedPeriod.labelId}): ${IdrFormatter.format(uiState.overview.periodExpenseIdr)}\n" +
-                                "• Jumlah Entri Buku Besar: ${uiState.periodTransactions.size} transaksi",
+                            text = "• Kas Tersedia: ${IdrFormatter.format(uiState.overview.availableCashIdr)} | Net Worth: ${IdrFormatter.format(uiState.overview.netWorthIdr)}\n" +
+                                "• Pemasukan ($scopeLabel): ${IdrFormatter.format(scopeIncome)}\n" +
+                                "• Pengeluaran Bersih ($scopeLabel): ${IdrFormatter.format(scopeExpense)}\n" +
+                                "• Rekap Tahun ${uiState.analyticsYear}: Masuk ${IdrFormatter.format(uiState.annualLedgerSummary.totalIncomeIdr)} | Abis ${IdrFormatter.format(uiState.annualLedgerSummary.totalNetExpenseIdr)}\n" +
+                                "• Rincian Per Kategori (${scopeCategories.size} kategori): ${scopeCategories.take(3).joinToString { "${it.categoryName} (${String.format(Locale.US, "%.0f", it.percentage)}%)" }.ifBlank { "Belum ada" }}\n" +
+                                "• Rincian Buku Besar: $scopeTxCount entri transaksi lengkap + tabel 12 bulan + mutasi ${uiState.accounts.size} akun + anggaran",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF0D141F)
                         )
@@ -775,7 +878,8 @@ private fun PdfExportCenterSubScreen(
                             onGeneratePdf(
                                 PdfReportConfig(
                                     reportTitle = reportTitle,
-                                    periodLabel = uiState.selectedPeriod.labelId,
+                                    periodLabel = scopeLabel,
+                                    scope = reportScope,
                                     customNotes = customNotes
                                 )
                             )
@@ -788,7 +892,7 @@ private fun PdfExportCenterSubScreen(
                     ) {
                         Icon(Icons.Default.PictureAsPdf, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Buat Laporan PDF", fontWeight = FontWeight.Bold)
+                        Text("Buat Laporan PDF Rinci", fontWeight = FontWeight.Bold)
                     }
 
                     if (uiState.lastGeneratedPdf != null) {
@@ -1042,7 +1146,9 @@ private fun SettingsAndPrivacySubScreen(
     onBack: () -> Unit,
     onSetThemeMode: (AppThemeMode) -> Unit,
     onTogglePrivacyMode: () -> Unit,
-    onUpdateReminders: (Boolean, Int, Int, Boolean) -> Unit,
+    onUpdateReminders: (Boolean, Int, Int, Boolean, Boolean, Boolean) -> Unit,
+    onUpdateAutoBackupEnabled: (Boolean) -> Unit,
+    onUpdatePatternLock: (Boolean, String, Boolean) -> Unit,
     onUpdateWhatsAppSettings: (String, Boolean) -> Unit,
     onSendWhatsAppNow: (String?) -> Unit,
     onSyncCloudNow: () -> Unit,
@@ -1051,6 +1157,7 @@ private fun SettingsAndPrivacySubScreen(
 ) {
     val context = LocalContext.current
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showSetupPatternDialog by remember { mutableStateOf(false) }
     var waPhoneInput by rememberSaveable(uiState.prefs.whatsAppPhone) { mutableStateOf(uiState.prefs.whatsAppPhone) }
     var waAutoNotify by rememberSaveable(uiState.prefs.whatsAppAutoNotifyOnTransaction) {
         mutableStateOf(uiState.prefs.whatsAppAutoNotifyOnTransaction)
@@ -1072,13 +1179,178 @@ private fun SettingsAndPrivacySubScreen(
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 14.dp).testTag("settings_subscreen")
     ) {
-        SubScreenTopBar(title = "Pengaturan, WA Notif & Privasi", onBack = onBack)
+        SubScreenTopBar(title = "Pengaturan, Keamanan & Cloud", onBack = onBack)
 
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(bottom = 80.dp)
         ) {
-            // 0. NEW: Free Official XynoosFinance WhatsApp Notification
+            // 0A. NEW: Pattern Lock Security ("Password Tipe Pola")
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("pattern_lock_settings_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.Pattern, contentDescription = null, tint = EmeraldPrimary)
+                            Text(
+                                text = "Keamanan Password Tipe Pola",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldPrimary
+                            )
+                        }
+                        Text(
+                            text = if (uiState.prefs.patternLockEnabled) {
+                                "Aktif: Aplikasi terkunci dengan pola 3x3 yang dienkripsi SHA-256 setiap kali dibuka."
+                            } else {
+                                "Lindungi catatan saldo dan transaksi Anda dengan kunci layar pola gambar 3x3."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Aktifkan Kunci Pola Aplikasi", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Minta pola keamanan saat membuka XynoosFinance", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Switch(
+                                checked = uiState.prefs.patternLockEnabled,
+                                onCheckedChange = { wantEnable ->
+                                    if (wantEnable) {
+                                        if (uiState.prefs.patternLockHash.isBlank()) {
+                                            showSetupPatternDialog = true
+                                        } else {
+                                            onUpdatePatternLock(true, uiState.prefs.patternLockHash, uiState.prefs.patternLockOnResume)
+                                        }
+                                    } else {
+                                        onUpdatePatternLock(false, uiState.prefs.patternLockHash, uiState.prefs.patternLockOnResume)
+                                    }
+                                },
+                                modifier = Modifier.testTag("pattern_lock_switch")
+                            )
+                        }
+
+                        if (uiState.prefs.patternLockEnabled) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Kunci Otomatis Saat Keluar Aplikasi", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                    Text("Minta pola kembali setelah berpindah aplikasi / standby", style = MaterialTheme.typography.labelSmall)
+                                }
+                                Switch(
+                                    checked = uiState.prefs.patternLockOnResume,
+                                    onCheckedChange = { resumeLock ->
+                                        onUpdatePatternLock(true, uiState.prefs.patternLockHash, resumeLock)
+                                    }
+                                )
+                            }
+                        }
+
+                        Button(
+                            onClick = { showSetupPatternDialog = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = EmeraldPrimary.copy(alpha = 0.16f),
+                                contentColor = EmeraldPrimary
+                            ),
+                            modifier = Modifier.fillMaxWidth().testTag("setup_pattern_button")
+                        ) {
+                            Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (uiState.prefs.patternLockHash.isBlank()) "Buat Password Tipe Pola (3x3)" else "Ubah Pola Keamanan Sekarang",
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 0B. NEW: Low-RAM 3-Minute Auto Cloud Backup Status & Control
+            item {
+                val backupStatus = uiState.autoBackupStatus
+                val lastBackupLabel = remember(uiState.prefs.lastAutoBackupMillis) {
+                    if (uiState.prefs.lastAutoBackupMillis > 0L) {
+                        SimpleDateFormat("dd MMM HH:mm:ss", Locale("id", "ID")).format(Date(uiState.prefs.lastAutoBackupMillis))
+                    } else {
+                        "Belum pernah berjalan"
+                    }
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("auto_backup_settings_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(
+                                    imageVector = if (backupStatus.isOnline) Icons.Default.CloudSync else Icons.Default.CloudOff,
+                                    contentDescription = null,
+                                    tint = if (backupStatus.isOnline) EmeraldPrimary else WarmAmber
+                                )
+                                Text(
+                                    text = "Auto-Backup Cloud (Setiap 3 Menit)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "• Koneksi: ${if (backupStatus.isOnline) "Online Terhubung Internet" else "Offline (Mode Lokal)"}\n" +
+                                "• Status Mesin: ${backupStatus.statusText}\n" +
+                                "• Cadangan Otomatis Terakhir: $lastBackupLabel\n" +
+                                "• Optimasi RAM: Kueri inkremental hanya mengirim baris baru/berubah ke akun Google Anda.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Auto-Backup Tiap 3 Menit Saat Online", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Otomatis backup ke Firestore tanpa menguras RAM", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Switch(
+                                checked = uiState.prefs.autoBackupEvery3MinEnabled,
+                                onCheckedChange = { onUpdateAutoBackupEnabled(it) },
+                                modifier = Modifier.testTag("auto_backup_3min_switch")
+                            )
+                        }
+
+                        Button(
+                            onClick = onSyncCloudNow,
+                            enabled = !uiState.isSyncing,
+                            modifier = Modifier.fillMaxWidth().testTag("settings_sync_now_button")
+                        ) {
+                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (uiState.isSyncing) "Menyinkronkan..." else "Backup & Sinkronkan Cloud Sekarang")
+                        }
+                    }
+                }
+            }
+
+            // 1. Free Official XynoosFinance WhatsApp Notification
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().testTag("whatsapp_settings_card"),
@@ -1142,7 +1414,7 @@ private fun SettingsAndPrivacySubScreen(
                 }
             }
 
-            // 1. Theme System
+            // 2. Theme System
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -1169,17 +1441,25 @@ private fun SettingsAndPrivacySubScreen(
                 }
             }
 
-            // 2. Financial Privacy & Reminders
+            // 3. Smart Useful Notifications & Financial Privacy
             item {
+                val reminderPresets = listOf(
+                    Triple(8, 0, "08:00 Pagi"),
+                    Triple(12, 30, "12:30 Siang"),
+                    Triple(20, 0, "20:00 Malam"),
+                    Triple(21, 30, "21:30 Rekap")
+                )
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().testTag("notifications_settings_card"),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("Notifikasi Berguna & Privasi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
                         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text("Mode Privasi Nominal (Rp ••••••••)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                Text("Sembunyikan angka saldo di layar publik & pratinjau notifikasi.", style = MaterialTheme.typography.bodySmall)
+                                Text("Sembunyikan angka saldo di layar publik & isi notifikasi.", style = MaterialTheme.typography.bodySmall)
                             }
                             Switch(
                                 checked = uiState.prefs.isPrivacyModeEnabled,
@@ -1190,16 +1470,91 @@ private fun SettingsAndPrivacySubScreen(
 
                         Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Pengingat Pencatatan Harian (20:00 WIB)", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                Text("Notifikasi lokal yang menghormati jam tenang & mode privasi.", style = MaterialTheme.typography.bodySmall)
+                                Text(
+                                    "Pengingat Harian Terjadwal (${String.format(Locale.US, "%02d:%02d", uiState.prefs.reminderHour, uiState.prefs.reminderMinute)} WIB)",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text("Notifikasi otomatis setiap hari menghormati jam tenang.", style = MaterialTheme.typography.bodySmall)
                             }
                             Switch(
                                 checked = uiState.prefs.remindersEnabled,
                                 onCheckedChange = { enabled ->
-                                    onUpdateReminders(enabled, 20, 0, uiState.prefs.quietHoursEnabled)
+                                    onUpdateReminders(
+                                        enabled,
+                                        uiState.prefs.reminderHour,
+                                        uiState.prefs.reminderMinute,
+                                        uiState.prefs.quietHoursEnabled,
+                                        uiState.prefs.budgetAlertsEnabled,
+                                        uiState.prefs.activityNotificationsEnabled
+                                    )
                                     if (enabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                                     }
+                                }
+                            )
+                        }
+
+                        if (uiState.prefs.remindersEnabled) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                reminderPresets.forEach { (hr, min, label) ->
+                                    FilterChip(
+                                        selected = uiState.prefs.reminderHour == hr && uiState.prefs.reminderMinute == min,
+                                        onClick = {
+                                            onUpdateReminders(
+                                                true,
+                                                hr,
+                                                min,
+                                                uiState.prefs.quietHoursEnabled,
+                                                uiState.prefs.budgetAlertsEnabled,
+                                                uiState.prefs.activityNotificationsEnabled
+                                            )
+                                        },
+                                        label = { Text(label) }
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Peringatan Otomatis Batas Anggaran", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Beri notif real-time jika pos belanja mencapai ≥70%, ≥90%, atau melebihi batas.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(
+                                checked = uiState.prefs.budgetAlertsEnabled,
+                                onCheckedChange = { alertOn ->
+                                    onUpdateReminders(
+                                        uiState.prefs.remindersEnabled,
+                                        uiState.prefs.reminderHour,
+                                        uiState.prefs.reminderMinute,
+                                        uiState.prefs.quietHoursEnabled,
+                                        alertOn,
+                                        uiState.prefs.activityNotificationsEnabled
+                                    )
+                                }
+                            )
+                        }
+
+                        Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Notif Konfirmasi Setiap Transaksi Baru", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text("Tampilkan bukti notifikasi instan tiap selesai mencatat transaksi.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(
+                                checked = uiState.prefs.activityNotificationsEnabled,
+                                onCheckedChange = { actOn ->
+                                    onUpdateReminders(
+                                        uiState.prefs.remindersEnabled,
+                                        uiState.prefs.reminderHour,
+                                        uiState.prefs.reminderMinute,
+                                        uiState.prefs.quietHoursEnabled,
+                                        uiState.prefs.budgetAlertsEnabled,
+                                        actOn
+                                    )
                                 }
                             )
                         }
@@ -1213,45 +1568,17 @@ private fun SettingsAndPrivacySubScreen(
                                 } else {
                                     ReminderNotificationHelper.sendPreviewReminderNotification(
                                         context = context,
-                                        title = "Rekap Keuangan Malam XynoosFinance",
+                                        title = "Notifikasi XynoosFinance Aktif!",
                                         availableCashIdr = uiState.overview.availableCashIdr,
                                         isPrivacyMode = uiState.prefs.isPrivacyModeEnabled
                                     )
                                 }
-                            }
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.Notifications, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Uji Notifikasi Pengingat Sekarang")
-                        }
-                    }
-                }
-            }
-
-            // 3. Cloud Synchronization Status
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Sinkronisasi Cloud Firestore & Penyimpanan Lokal", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Text("Status: ${uiState.lastSyncMessage}", style = MaterialTheme.typography.bodySmall, color = EmeraldPrimary)
-                        Text(
-                            "• Penyimpanan Utama: Room SQLite (tersedia 100% secara offline)\n" +
-                                "• Sinkronisasi Cloud: Firestore Enterprise terisolasi per UID Google\n" +
-                                "• Pemrosesan AI: Hanya ringkasan agregat yang dikirim ke Gemini 3.5 Flash-Lite",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Button(
-                            onClick = onSyncCloudNow,
-                            enabled = !uiState.isSyncing,
-                            modifier = Modifier.testTag("settings_sync_now_button")
-                        ) {
-                            Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (uiState.isSyncing) "Menyinkronkan..." else "Sinkronkan ke Cloud Sekarang")
+                            Text("Kirim & Uji Notifikasi Sekarang")
                         }
                     }
                 }
@@ -1265,6 +1592,11 @@ private fun SettingsAndPrivacySubScreen(
                 ) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Keamanan Akun & Manajemen Data", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Isolasi Data: Room SQLite (offline) + Cloud Firestore terpisah per UID Google Anda.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         OutlinedButton(
                             onClick = onSignOut,
                             modifier = Modifier.fillMaxWidth().testTag("sign_out_button")
@@ -1286,7 +1618,7 @@ private fun SettingsAndPrivacySubScreen(
                             Text("Hapus Seluruh Data & Akun Secara Permanen")
                         }
                         Text(
-                            text = "XynoosFinance v1.0.0 • Native Android Kotlin + Jetpack Compose",
+                            text = "XynoosFinance • Built by Xynoos Technology",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1294,6 +1626,17 @@ private fun SettingsAndPrivacySubScreen(
                 }
             }
         }
+    }
+
+    if (showSetupPatternDialog) {
+        SetupPatternLockDialog(
+            isChangingExisting = uiState.prefs.patternLockHash.isNotBlank(),
+            onDismiss = { showSetupPatternDialog = false },
+            onPatternSaved = { hash ->
+                onUpdatePatternLock(true, hash, uiState.prefs.patternLockOnResume)
+                showSetupPatternDialog = false
+            }
+        )
     }
 
     if (showDeleteConfirmDialog) {

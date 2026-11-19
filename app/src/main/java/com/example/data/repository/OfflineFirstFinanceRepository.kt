@@ -1,7 +1,10 @@
 package com.example.data.repository
 
+import com.example.data.local.AiSessionEntity
 import com.example.data.local.FinanceDao
 import com.example.data.local.toEntity
+import com.example.domain.AiMessageModel
+import com.example.domain.AiSessionModel
 import com.example.domain.BudgetModel
 import com.example.domain.ContributionType
 import com.example.domain.DefaultCategories
@@ -51,11 +54,142 @@ class OfflineFirstFinanceRepository(
     fun observeInvoices(): Flow<List<InvoiceReferenceModel>> =
         dao.observeInvoices(userId).map { list -> list.map { it.toDomain() } }
 
+    // Persistent AI Chat Sessions & Messages
+    fun observeAiSessions(): Flow<List<AiSessionModel>> =
+        dao.observeAiSessions(userId).map { list -> list.map { it.toDomain() } }
+
+    fun observeAiMessages(sessionId: String): Flow<List<AiMessageModel>> =
+        dao.observeAiMessages(userId, sessionId).map { list -> list.map { it.toDomain() } }
+
+    suspend fun ensureDefaultAiSession(welcomeContent: String): String {
+        val existing = dao.getAiSessions(userId)
+        if (existing.isNotEmpty()) {
+            return existing.first().id
+        }
+        val now = System.currentTimeMillis()
+        val sessionId = "ai_sess_${UUID.randomUUID().toString().replace("-", "").take(10)}"
+        val session = AiSessionEntity(
+            id = sessionId,
+            userId = userId,
+            title = "Konsultasi Keuangan #1",
+            createdAtMillis = now,
+            updatedAtMillis = now,
+            lastMessagePreview = "Siap membantu analisis keuangan & catat transaksi...",
+            messageCount = 1
+        )
+        dao.upsertAiSession(session)
+        dao.upsertAiMessage(
+            AiMessageModel(
+                id = "msg_welcome_$sessionId",
+                sessionId = sessionId,
+                userId = userId,
+                role = "assistant",
+                content = welcomeContent,
+                timestampMillis = now
+            ).toEntity()
+        )
+        return sessionId
+    }
+
+    suspend fun createAiSession(title: String, welcomeContent: String): AiSessionModel {
+        val now = System.currentTimeMillis()
+        val count = dao.getAiSessions(userId).size + 1
+        val finalTitle = title.trim().ifBlank { "Sesi Konsultasi #$count" }
+        val session = AiSessionModel(
+            id = "ai_sess_${UUID.randomUUID().toString().replace("-", "").take(10)}",
+            userId = userId,
+            title = finalTitle,
+            createdAtMillis = now,
+            updatedAtMillis = now,
+            lastMessagePreview = "Sesi baru dimulai",
+            messageCount = 1
+        )
+        dao.upsertAiSession(session.toEntity())
+        dao.upsertAiMessage(
+            AiMessageModel(
+                id = "msg_welcome_${session.id}",
+                sessionId = session.id,
+                userId = userId,
+                role = "assistant",
+                content = welcomeContent,
+                timestampMillis = now
+            ).toEntity()
+        )
+        return session
+    }
+
+    suspend fun renameAiSession(sessionId: String, newTitle: String) {
+        val cleaned = newTitle.trim().take(60)
+        if (cleaned.isEmpty()) return
+        val current = dao.getAiSessions(userId).firstOrNull { it.id == sessionId } ?: return
+        dao.upsertAiSession(current.copy(title = cleaned, updatedAtMillis = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteAiSession(sessionId: String) {
+        dao.deleteAiSessionAndMessages(sessionId, userId)
+    }
+
+    suspend fun saveAiMessage(message: AiMessageModel) {
+        val normalized = message.copy(userId = userId)
+        dao.upsertAiMessage(normalized.toEntity())
+        val sessions = dao.getAiSessions(userId)
+        val existingSession = sessions.firstOrNull { it.id == normalized.sessionId }
+        val preview = normalized.content
+            .replace("\n", " ")
+            .replace("**", "")
+            .trim()
+            .take(80)
+        val existingMsgsCount = dao.getAiMessages(userId, normalized.sessionId).size
+        if (existingSession != null) {
+            val shouldAutoTitle = normalized.role == "user" &&
+                (existingSession.title.startsWith("Sesi Konsultasi") || existingSession.title.startsWith("Konsultasi Keuangan"))
+            val updatedTitle = if (shouldAutoTitle) {
+                normalized.content.trim().take(36).let { if (normalized.content.length > 36) "$it…" else it }
+            } else {
+                existingSession.title
+            }
+            dao.upsertAiSession(
+                existingSession.copy(
+                    title = updatedTitle,
+                    updatedAtMillis = normalized.timestampMillis,
+                    lastMessagePreview = preview,
+                    messageCount = existingMsgsCount
+                )
+            )
+        } else {
+            dao.upsertAiSession(
+                AiSessionEntity(
+                    id = normalized.sessionId,
+                    userId = userId,
+                    title = if (normalized.role == "user") normalized.content.take(36) else "Sesi Konsultasi",
+                    createdAtMillis = normalized.timestampMillis,
+                    updatedAtMillis = normalized.timestampMillis,
+                    lastMessagePreview = preview,
+                    messageCount = existingMsgsCount
+                )
+            )
+        }
+    }
+
+    suspend fun getAiMessagesForSession(sessionId: String): List<AiMessageModel> =
+        dao.getAiMessages(userId, sessionId).map { it.toDomain() }
+
     suspend fun ensureDefaultCategoriesSeeded() {
         val existing = dao.getCategories(userId)
-        if (existing.isEmpty()) {
-            val defaults = DefaultCategories.getDefaults(userId).map { it.toEntity() }
-            dao.upsertCategories(defaults)
+        val existingMap = existing.associateBy { it.id }
+        val defaults = DefaultCategories.getDefaults(userId)
+        val toUpsert = buildList {
+            defaults.forEach { cat ->
+                val prev = existingMap[cat.id]
+                if (prev == null) {
+                    add(cat.toEntity())
+                } else if (cat.id == "cat_salary" && prev.name == "Gaji Utama") {
+                    add(prev.copy(name = cat.name))
+                }
+            }
+        }
+        if (toUpsert.isNotEmpty()) {
+            dao.upsertCategories(toUpsert)
         }
     }
 
@@ -109,7 +243,9 @@ class OfflineFirstFinanceRepository(
     }
 
     suspend fun saveCategory(category: TransactionCategoryModel) {
-        dao.upsertCategory(category.copy(userId = userId).toEntity())
+        val normalized = category.copy(userId = userId)
+        dao.upsertCategory(normalized.toEntity())
+        cloudRepo?.syncCategory(normalized)
     }
 
     suspend fun saveBudget(budget: BudgetModel) {
@@ -213,35 +349,77 @@ class OfflineFirstFinanceRepository(
     }
 
     /**
-     * Synchronizes pending local records to Cloud Firestore and pulls newer cloud records.
-     * Prevents duplicate entries by using stable IDs and version numbers.
+     * Low-RAM incremental backup: only queries and uploads unsynced local records
+     * without loading full tables or overwriting cloud with stale data.
+     */
+    suspend fun backupPendingChangesIncremental(): Result<Int> {
+        val remote = cloudRepo ?: return Result.failure(IllegalStateException("Cloud repository not configured"))
+        return try {
+            var pushedCount = 0
+
+            val pendingAccounts = dao.getUnsyncedAccounts(userId).map { it.toDomain() }
+            for (acc in pendingAccounts) {
+                if (remote.syncAccount(acc).isSuccess) {
+                    dao.upsertAccount(acc.copy(syncStatus = SyncStatus.SYNCED).toEntity())
+                    pushedCount++
+                }
+            }
+
+            val pendingTxs = dao.getUnsyncedTransactions(userId).map { it.toDomain() }
+            for (tx in pendingTxs) {
+                if (remote.syncTransaction(tx).isSuccess) {
+                    dao.upsertTransaction(tx.copy(syncStatus = SyncStatus.SYNCED).toEntity())
+                    pushedCount++
+                }
+            }
+
+            val pendingBudgets = dao.getUnsyncedBudgets(userId).map { it.toDomain() }
+            for (bdg in pendingBudgets) {
+                if (remote.syncBudget(bdg).isSuccess) {
+                    dao.upsertBudget(bdg.copy(syncStatus = SyncStatus.SYNCED).toEntity())
+                    pushedCount++
+                }
+            }
+
+            val pendingGoals = dao.getUnsyncedGoals(userId).map { it.toDomain() }
+            for (goal in pendingGoals) {
+                if (remote.syncGoal(goal).isSuccess) {
+                    dao.upsertGoal(goal.copy(syncStatus = SyncStatus.SYNCED).toEntity())
+                    pushedCount++
+                }
+            }
+
+            val pendingInvoices = dao.getUnsyncedInvoices(userId).map { it.toDomain() }
+            for (inv in pendingInvoices) {
+                if (remote.syncInvoice(inv).isSuccess) {
+                    dao.upsertInvoice(inv.copy(syncStatus = SyncStatus.SYNCED).toEntity())
+                    pushedCount++
+                }
+            }
+
+            Result.success(pushedCount)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Full bidirectional sync: pushes pending local records across all collections
+     * and pulls newer cloud records isolated per Google UID.
      */
     suspend fun synchronizeWithCloud(): Result<Int> {
         val remote = cloudRepo ?: return Result.failure(IllegalStateException("Cloud repository not configured"))
         return try {
-            var syncedCount = 0
-            // 1. Push local pending accounts & transactions
-            val localAccounts = dao.getAccounts(userId).map { it.toDomain() }
-            for (acc in localAccounts) {
-                if (acc.syncStatus != SyncStatus.SYNCED) {
-                    if (remote.syncAccount(acc).isSuccess) {
-                        dao.upsertAccount(acc.copy(syncStatus = SyncStatus.SYNCED).toEntity())
-                        syncedCount++
-                    }
-                }
+            var syncedCount = backupPendingChangesIncremental().getOrDefault(0)
+
+            // Sync custom user categories
+            val defaultIds = DefaultCategories.getDefaults(userId).map { it.id }.toSet()
+            val customLocalCats = dao.getCategories(userId).map { it.toDomain() }.filter { it.id !in defaultIds }
+            for (cat in customLocalCats) {
+                if (remote.syncCategory(cat).isSuccess) syncedCount++
             }
 
-            val localTxs = dao.getTransactions(userId).map { it.toDomain() }
-            for (tx in localTxs) {
-                if (tx.syncStatus != SyncStatus.SYNCED) {
-                    if (remote.syncTransaction(tx).isSuccess) {
-                        dao.upsertTransaction(tx.copy(syncStatus = SyncStatus.SYNCED).toEntity())
-                        syncedCount++
-                    }
-                }
-            }
-
-            // 2. Pull cloud transactions and resolve conflicts by version
+            // Pull cloud transactions and resolve conflicts by version
             val remoteTxsResult = remote.fetchTransactions()
             if (remoteTxsResult.isSuccess) {
                 val localById = dao.getTransactions(userId).associateBy { it.id }
@@ -254,13 +432,49 @@ class OfflineFirstFinanceRepository(
                 }
             }
 
-            // 3. Pull cloud accounts
+            // Pull cloud accounts
             val remoteAccounts = remote.fetchAccounts()
             val localAccById = dao.getAccounts(userId).associateBy { it.id }
             for (remoteAcc in remoteAccounts) {
                 val existingLocal = localAccById[remoteAcc.id]
                 if (existingLocal == null || remoteAcc.version >= existingLocal.version) {
                     dao.upsertAccount(remoteAcc.toEntity())
+                    syncedCount++
+                }
+            }
+
+            // Pull cloud budgets, goals, invoices, categories
+            val localBdgById = dao.getBudgets(userId).associateBy { it.id }
+            for (remoteBdg in remote.fetchBudgets()) {
+                val existingLocal = localBdgById[remoteBdg.id]
+                if (existingLocal == null || remoteBdg.version >= existingLocal.version) {
+                    dao.upsertBudget(remoteBdg.toEntity())
+                    syncedCount++
+                }
+            }
+
+            val localGoalById = dao.getGoals(userId).associateBy { it.id }
+            for (remoteGoal in remote.fetchGoals()) {
+                val existingLocal = localGoalById[remoteGoal.id]
+                if (existingLocal == null || remoteGoal.version >= existingLocal.version) {
+                    dao.upsertGoal(remoteGoal.toEntity())
+                    syncedCount++
+                }
+            }
+
+            val localInvById = dao.getInvoices(userId).associateBy { it.id }
+            for (remoteInv in remote.fetchInvoices()) {
+                val existingLocal = localInvById[remoteInv.id]
+                if (existingLocal == null || remoteInv.version >= existingLocal.version) {
+                    dao.upsertInvoice(remoteInv.toEntity())
+                    syncedCount++
+                }
+            }
+
+            val localCatById = dao.getCategories(userId).associateBy { it.id }
+            for (remoteCat in remote.fetchCategories()) {
+                if (localCatById[remoteCat.id] == null) {
+                    dao.upsertCategory(remoteCat.toEntity())
                     syncedCount++
                 }
             }

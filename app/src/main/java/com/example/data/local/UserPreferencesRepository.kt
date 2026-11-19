@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.domain.AppThemeMode
@@ -24,6 +25,13 @@ data class UserPreferencesState(
     val reminderHour: Int = 20,
     val reminderMinute: Int = 0,
     val quietHoursEnabled: Boolean = true,
+    val budgetAlertsEnabled: Boolean = true,
+    val activityNotificationsEnabled: Boolean = true,
+    val autoBackupEvery3MinEnabled: Boolean = true,
+    val lastAutoBackupMillis: Long = 0L,
+    val patternLockEnabled: Boolean = false,
+    val patternLockHash: String = "",
+    val patternLockOnResume: Boolean = true,
     val reportOrgName: String = "Xynoos Private Wealth",
     val reportOrgAddress: String = "Jakarta Selatan, DKI Jakarta, Indonesia",
     val reportContactInfo: String = "finance@xynoos.id",
@@ -46,6 +54,13 @@ class UserPreferencesRepository(private val context: Context) {
         val REMINDER_HOUR = intPreferencesKey("reminder_hour")
         val REMINDER_MINUTE = intPreferencesKey("reminder_minute")
         val QUIET_HOURS = booleanPreferencesKey("quiet_hours_enabled")
+        val BUDGET_ALERTS_ENABLED = booleanPreferencesKey("budget_alerts_enabled")
+        val ACTIVITY_NOTIFS_ENABLED = booleanPreferencesKey("activity_notifs_enabled")
+        val AUTO_BACKUP_3MIN = booleanPreferencesKey("auto_backup_3min_enabled")
+        val LAST_AUTO_BACKUP_MILLIS = longPreferencesKey("last_auto_backup_millis")
+        val PATTERN_LOCK_ENABLED = booleanPreferencesKey("pattern_lock_enabled")
+        val PATTERN_LOCK_HASH = stringPreferencesKey("pattern_lock_hash")
+        val PATTERN_LOCK_ON_RESUME = booleanPreferencesKey("pattern_lock_on_resume")
         val REPORT_ORG_NAME = stringPreferencesKey("report_org_name")
         val REPORT_ORG_ADDRESS = stringPreferencesKey("report_org_address")
         val REPORT_CONTACT_INFO = stringPreferencesKey("report_contact_info")
@@ -69,6 +84,13 @@ class UserPreferencesRepository(private val context: Context) {
             reminderHour = prefs[Keys.REMINDER_HOUR] ?: 20,
             reminderMinute = prefs[Keys.REMINDER_MINUTE] ?: 0,
             quietHoursEnabled = prefs[Keys.QUIET_HOURS] ?: true,
+            budgetAlertsEnabled = prefs[Keys.BUDGET_ALERTS_ENABLED] ?: true,
+            activityNotificationsEnabled = prefs[Keys.ACTIVITY_NOTIFS_ENABLED] ?: true,
+            autoBackupEvery3MinEnabled = prefs[Keys.AUTO_BACKUP_3MIN] ?: true,
+            lastAutoBackupMillis = prefs[Keys.LAST_AUTO_BACKUP_MILLIS] ?: 0L,
+            patternLockEnabled = prefs[Keys.PATTERN_LOCK_ENABLED] ?: false,
+            patternLockHash = prefs[Keys.PATTERN_LOCK_HASH] ?: "",
+            patternLockOnResume = prefs[Keys.PATTERN_LOCK_ON_RESUME] ?: true,
             reportOrgName = prefs[Keys.REPORT_ORG_NAME] ?: "Xynoos Private Wealth",
             reportOrgAddress = prefs[Keys.REPORT_ORG_ADDRESS] ?: "Jakarta Selatan, DKI Jakarta, Indonesia",
             reportContactInfo = prefs[Keys.REPORT_CONTACT_INFO] ?: "finance@xynoos.id",
@@ -123,13 +145,51 @@ class UserPreferencesRepository(private val context: Context) {
         enabled: Boolean,
         hour: Int,
         minute: Int,
-        quietHours: Boolean
+        quietHours: Boolean,
+        budgetAlertsEnabled: Boolean = true,
+        activityNotificationsEnabled: Boolean = true
     ) {
         context.xynoosDataStore.edit { prefs ->
             prefs[Keys.REMINDERS_ENABLED] = enabled
             prefs[Keys.REMINDER_HOUR] = hour
             prefs[Keys.REMINDER_MINUTE] = minute
             prefs[Keys.QUIET_HOURS] = quietHours
+            prefs[Keys.BUDGET_ALERTS_ENABLED] = budgetAlertsEnabled
+            prefs[Keys.ACTIVITY_NOTIFS_ENABLED] = activityNotificationsEnabled
+        }
+    }
+
+    suspend fun updateAutoBackupSettings(
+        enabled: Boolean,
+        lastBackupMillis: Long? = null
+    ) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.AUTO_BACKUP_3MIN] = enabled
+            if (lastBackupMillis != null) {
+                prefs[Keys.LAST_AUTO_BACKUP_MILLIS] = lastBackupMillis
+            }
+        }
+    }
+
+    suspend fun recordAutoBackupTimestamp(timestampMillis: Long = System.currentTimeMillis()) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.LAST_AUTO_BACKUP_MILLIS] = timestampMillis
+        }
+    }
+
+    suspend fun updatePatternLock(
+        enabled: Boolean,
+        patternHash: String? = null,
+        lockOnResume: Boolean? = null
+    ) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.PATTERN_LOCK_ENABLED] = enabled
+            if (patternHash != null) {
+                prefs[Keys.PATTERN_LOCK_HASH] = patternHash
+            }
+            if (lockOnResume != null) {
+                prefs[Keys.PATTERN_LOCK_ON_RESUME] = lockOnResume
+            }
         }
     }
 

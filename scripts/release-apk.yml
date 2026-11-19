@@ -1,49 +1,75 @@
-name: Build & Release XynoosFinance APK
+name: Release XynoosFinance APK (Manual & Tag)
 
 on:
-  push:
-    branches:
-      - main
-      - master
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Tag versi rilis (contoh: v1.0.0)"
+        description: "Tag rilis (kosongkan untuk otomatis v2.0.<run_number>)"
         required: false
-        default: "v1.0.0"
+        default: ""
+      release_channel:
+        description: "Jenis paket APK yang dibangun"
+        type: choice
+        required: false
+        default: "release-and-debug"
+        options:
+          - release-and-debug
+          - release-only
+          - debug-only
+      publish_github_release:
+        description: "Terbitkan otomatis ke halaman GitHub Releases"
+        type: boolean
+        required: false
+        default: true
+  push:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
+concurrency:
+  group: xynoos-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build-and-release-apk:
-    name: Build & Publish APK by Xynoos Technology
+    name: Build & Release XynoosFinance v2.0 APK
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21 (Temurin)
         uses: actions/setup-java@v4
         with:
           distribution: "temurin"
-          java-version: "17"
+          java-version: "21"
 
-      - name: Setup Android SDK
+      - name: Setup Android SDK & Accept Licenses
         uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platform-tools
 
-      - name: Setup Gradle
+      - name: Pre-accept Android SDK Licenses
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: Setup Gradle 9.3.1
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "8.11.1"
+          gradle-version: "9.3.1"
 
       - name: Prepare Keystores for Debug & Release Signing
+        shell: bash
         run: |
           if [ -f "debug.keystore.base64" ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
           else
             keytool -genkeypair -v \
               -keystore debug.keystore \
@@ -57,12 +83,12 @@ jobs:
           fi
 
           if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | base64 -d > my-upload-key.jks
+            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | tr -d '\r\n' | base64 -d > my-upload-key.jks
             echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
           else
             # Salin sertifikat dari debug.keystore (alias androiddebugkey -> upload)
-            # agar SHA-1 & SHA-256 pada Release APK sama persis dengan yang terdaftar di google-services.json
+            # agar SHA-1 & SHA-256 pada Release APK sama dengan yang terdaftar di Firebase / Google Sign-In
             keytool -importkeystore \
               -srckeystore debug.keystore \
               -srcstorepass android \
@@ -80,62 +106,112 @@ jobs:
           echo "KEYSTORE_PATH=${GITHUB_WORKSPACE}/my-upload-key.jks" >> $GITHUB_ENV
 
       - name: Ensure .env Exists for Secrets Plugin
+        shell: bash
         run: |
           if [ ! -f ".env" ]; then
-            cp .env.example .env
+            if [ -f ".env.example" ]; then
+              cp .env.example .env
+            else
+              touch .env
+            fi
           fi
 
-      - name: Build Release & Debug APKs
+      - name: Determine Release Tag & Gradle Tasks
+        id: meta
+        shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+          INPUT_CHANNEL: ${{ inputs.release_channel }}
         run: |
-          gradle assembleRelease assembleDebug --stacktrace
-          mkdir -p dist
-          cp app/build/outputs/apk/release/app-release.apk dist/XynoosFinance-Release.apk
-          cp app/build/outputs/apk/debug/app-debug.apk dist/XynoosFinance-Debug.apk
+          CHANNEL="${INPUT_CHANNEL:-release-and-debug}"
 
-      - name: Upload APK Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: XynoosFinance-APK-Bundle
-          path: |
-            dist/XynoosFinance-Release.apk
-            dist/XynoosFinance-Debug.apk
-
-      - name: Determine Release Tag
-        id: tag_step
-        run: |
           if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
             TAG_NAME="${GITHUB_REF#refs/tags/}"
-          elif [ -n "${{ github.event.inputs.release_tag }}" ]; then
-            TAG_NAME="${{ github.event.inputs.release_tag }}"
+          elif [ -n "$INPUT_TAG" ]; then
+            TAG_NAME="$INPUT_TAG"
           else
-            TAG_NAME="v1.0.${GITHUB_RUN_NUMBER}"
+            TAG_NAME="v2.0.${GITHUB_RUN_NUMBER}"
           fi
+
+          if [ "$CHANNEL" = "release-only" ]; then
+            GRADLE_TASKS="assembleRelease"
+          elif [ "$CHANNEL" = "debug-only" ]; then
+            GRADLE_TASKS="assembleDebug"
+          else
+            GRADLE_TASKS="assembleRelease assembleDebug"
+          fi
+
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "gradle_tasks=${GRADLE_TASKS}" >> $GITHUB_OUTPUT
+          echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
+
+      - name: Build APK (${{ steps.meta.outputs.channel }})
+        shell: bash
+        run: |
+          gradle ${{ steps.meta.outputs.gradle_tasks }} --no-daemon --stacktrace
+          mkdir -p dist
+          if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+            cp app/build/outputs/apk/release/app-release.apk "dist/XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk"
+          fi
+          if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp app/build/outputs/apk/debug/app-debug.apk "dist/XynoosFinance-${{ steps.meta.outputs.tag_name }}-Debug.apk"
+          fi
+          ls -lh dist/
+
+      - name: Upload APK Artifacts (Selalu Tersedia di Tab Actions)
+        uses: actions/upload-artifact@v4
+        with:
+          name: XynoosFinance-${{ steps.meta.outputs.tag_name }}-APK
+          path: dist/*.apk
+          retention-days: 30
 
       - name: Publish APK to GitHub Releases
+        id: gh_release
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_github_release == true || inputs.publish_github_release == 'true' }}
+        continue-on-error: true
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.tag_step.outputs.tag_name }}
-          name: "XynoosFinance ${{ steps.tag_step.outputs.tag_name }} — Official Android APK (Xynoos Technology)"
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: "XynoosFinance ${{ steps.meta.outputs.tag_name }} — Official Android APK (Xynoos Technology)"
+          make_latest: true
+          fail_on_unmatched_files: false
           body: |
-            ## XynoosFinance Android Platform (${{ steps.tag_step.outputs.tag_name }})
+            ## XynoosFinance Android Platform (${{ steps.meta.outputs.tag_name }})
             **Dikembangkan dan Dirilis oleh Xynoos Technology**
 
             ### Unduh File Instalasi Android (APK)
-            Silakan unduh salah satu file APK di bawah ini untuk menginstal dan menyebarluaskan aplikasi **XynoosFinance**:
-            - **`XynoosFinance-Release.apk`** *(Direkomendasikan untuk distribusi publik & instalasi langsung)*
-            - **`XynoosFinance-Debug.apk`** *(Versi pengujian / debugging)*
+            Silakan unduh file APK di bawah ini untuk menginstal dan menyebarluaskan aplikasi **XynoosFinance**:
+            - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk`** *(Direkomendasikan untuk distribusi publik & instalasi langsung)*
+            - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Debug.apk`** *(Versi pengujian / debugging, jika disertakan)*
 
-            ### Fitur Utama Rilis Ini:
-            - **Layar Hitung Nominal Saldo Real-Time (`XynoosCurrencyNominalInput`)**: Indikator skala nominal (`RIBUAN` s/d `TRILIUNAN`), ejaan Terbilang Bahasa Indonesia otomatis, kalkulator cepat, dan simulasi saldo rekening.
-            - **Terminal Pasar & Grafik Saham / Valuta Asing Real-Time (USD/IDR)**: Pembaruan kurs USD per 1 menit dengan grafik *Candlestick* OHLC profesional.
-            - **Target Tabungan Auto-Sync**: Terhubung langsung dengan Total Saldo Kekayaan Bersih secara otomatis.
-            - **Asisten Keuangan Interaktif**: Mode Tanya Jawab finansial dan Mode Pencatatan Otomatis bebas tertutup keyboard.
-            - **Ekspor Kartu Gambar Status Keuangan HD & Kirim ke WhatsApp Gratis**: Bagikan laporan status keuangan berlabel resmi **XynoosFinance**.
-          files: |
-            dist/XynoosFinance-Release.apk
-            dist/XynoosFinance-Debug.apk
+            ### Pembaruan Terbaru Rilis Ini (v2.0):
+            - **Auto Backup Cloud Setiap 3 Menit (Low-RAM & Online-Aware)**: Sinkronisasi inkremental otomatis per akun Google (`users/{uid}`) saat terhubung ke internet tanpa membebani memori.
+            - **Input Transaksi Seamless Layar Penuh**: Form transaksi stabil mengikuti keyboard (`imePadding`) dengan tombol simpan selalu menempel di bawah.
+            - **Xynoos AI Lebih Cerdas + Multi-Sesi Persisten**: Riwayat konsultasi AI tersimpan lokal di SQLite dengan dukungan manajemen sesi, analisis bulanan/tahunan, dan parser transaksi alami.
+            - **Kategori Baru Lebih Kreatif**: Tambahan kategori seperti *Gaji Pekerjaan*, *Gaji PKL / Magang*, *Gaji Lain*, *Beli Makanan & Lauk*, *Beli Jajan & Camilan*, *Beli Bensin & BBM*, dan lainnya.
+            - **Notifikasi Nyata & Bermanfaat**: Pengingat harian terjadwal, peringatan anggaran otomatis (≥70%, ≥90%, ≥100%), dan notifikasi target tabungan tercapai.
+            - **Keamanan Kunci Pola 3×3 (Pattern Lock)**: Proteksi aplikasi dengan pola gestur interaktif ber-hash SHA-256.
+          files: dist/*.apk
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Write Workflow Summary
+        shell: bash
+        run: |
+          {
+            echo "## Build & Release XynoosFinance Selesai"
+            echo ""
+            echo "- **Tag Rilis:** \`${{ steps.meta.outputs.tag_name }}\`"
+            echo "- **Mode Build:** \`${{ steps.meta.outputs.channel }}\`"
+            echo "- **Artifacts:** Tersedia di bagian **Artifacts** di halaman run ini (\`XynoosFinance-${{ steps.meta.outputs.tag_name }}-APK\`)."
+            if [ "${{ steps.gh_release.outcome }}" = "success" ]; then
+              echo "- **GitHub Releases:** Berhasil diterbitkan ke menu **Releases** repository."
+            elif [ "${{ steps.gh_release.outcome }}" = "skipped" ]; then
+              echo "- **GitHub Releases:** Dilewati sesuai pilihan workflow."
+            else
+              echo "- **GitHub Releases:** Publikasi tag/release ditahan oleh izin bawaan GitHub repository (*Read-only GITHUB_TOKEN*), **namun file APK tetap aman dan dapat diunduh langsung dari Artifacts di bawah**."
+              echo "  - Untuk mengaktifkan publikasi ke tab *Releases*: buka **Settings → Actions → General → Workflow permissions**, pilih **Read and write permissions**, lalu klik **Save**."
+            fi
+          } >> $GITHUB_STEP_SUMMARY

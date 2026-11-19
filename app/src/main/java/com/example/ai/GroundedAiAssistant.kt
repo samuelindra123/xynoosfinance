@@ -2,6 +2,9 @@ package com.example.ai
 
 import android.util.Log
 import com.example.data.remote.LiveUsdMarketState
+import com.example.domain.AiMessageModel
+import com.example.domain.AnnualLedgerSummary
+import com.example.domain.BudgetAlertLevel
 import com.example.domain.BudgetProgressSummary
 import com.example.domain.CategoryBreakdownItem
 import com.example.domain.DashboardPeriod
@@ -10,6 +13,7 @@ import com.example.domain.FinancialCalculator
 import com.example.domain.FinancialGoalModel
 import com.example.domain.FinancialOverviewSummary
 import com.example.domain.IdrFormatter
+import com.example.domain.MonthlyLedgerSummary
 import com.example.domain.ProposedTransactionDraft
 import com.example.domain.TransactionCategoryModel
 import com.example.domain.TransactionModel
@@ -36,16 +40,16 @@ data class GroundedAiResult(
 )
 
 /**
- * Grounded Xynoos AI Finance Assistant & Open Q&A Advisor.
+ * Grounded Xynoos AI Finance Assistant & Advisor.
  * Uses Firebase AI Logic (`gemini-3.5-flash-lite`) with App Check attestation and
- * structured `Schema.obj(...)` JSON output, backed by deterministic repository calculations
- * and real-time 1-minute USD/IDR exchange rates.
+ * structured `Schema.obj(...)` JSON output, backed by deterministic repository calculations,
+ * multi-turn session history, monthly/annual ledger context, and live USD/IDR exchange rates.
  */
 class GroundedAiAssistant {
 
     private val structuredSchema = Schema.obj(
         properties = mapOf(
-            "explanation" to Schema.string(description = "Grounded financial explanation, Q&A answer, and recommendation in natural Indonesian"),
+            "explanation" to Schema.string(description = "Grounded financial explanation, actionable recommendation, and Q&A answer in natural Indonesian"),
             "actionType" to Schema.enumeration(
                 values = listOf("SUMMARY", "SPENDING_TREND", "BUDGET_ADVICE", "GOAL_PROJECTION", "DRAFT_TRANSACTION", "GENERAL_QA"),
                 description = "Category of financial action or Q&A"
@@ -76,7 +80,7 @@ class GroundedAiAssistant {
 
     /**
      * Deterministically parses natural Indonesian transaction input such as:
-     * "Bayar makan siang 35 ribu pakai cash" or "Terima gaji 15 juta ke BCA"
+     * "Beli bensin pertamax 50 ribu pakai gopay", "Beli jajan seblak 25rb", or "Terima gaji pkl 1.5 juta ke BCA"
      */
     fun parseNaturalTransactionDraft(
         prompt: String,
@@ -84,16 +88,27 @@ class GroundedAiAssistant {
         categories: List<TransactionCategoryModel>
     ): ProposedTransactionDraft? {
         val lower = prompt.lowercase(Locale.ROOT).trim()
-        // Do not trigger transaction draft if the user is asking a question
-        if (lower.startsWith("apa") || lower.startsWith("bagaimana") || lower.startsWith("kenapa") ||
-            lower.startsWith("berapa") || lower.startsWith("jelaskan") || lower.startsWith("kapan") ||
-            lower.startsWith("tips") || lower.startsWith("cara") || lower.contains("?")
+        if (lower.startsWith("apa") || lower.startsWith("bagaimana") || lower.startsWith("gimana") ||
+            lower.startsWith("kenapa") || lower.startsWith("berapa") || lower.startsWith("jelaskan") ||
+            lower.startsWith("kapan") || lower.startsWith("tips") || lower.startsWith("cara") ||
+            lower.startsWith("audit") || lower.startsWith("evaluasi") || lower.startsWith("analis") ||
+            lower.contains("?")
         ) {
             return null
         }
 
-        val isExpenseTrigger = listOf("bayar", "beli", "makan", "jajan", "ongkos", "bensin", "tagihan", "keluar", "belanja").any { lower.contains(it) }
-        val isIncomeTrigger = listOf("terima", "gaji", "masuk", "dapat", "honor", "invoice cair", "pendapatan").any { lower.contains(it) }
+        val isExpenseTrigger = listOf(
+            "bayar", "beli", "makan", "jajan", "ngopi", "kopi", "ongkos", "bensin", "bbm",
+            "pertalite", "pertamax", "solar", "tagihan", "keluar", "belanja", "topup", "top up",
+            "pulsa", "kuota", "paket data", "ojol", "parkir", "tol", "skincare", "potong rambut",
+            "barber", "sedekah", "infaq", "langganan", "nonton", "bioskop"
+        ).any { lower.contains(it) }
+
+        val isIncomeTrigger = listOf(
+            "terima", "gaji", "pkl", "magang", "masuk", "dapat", "honor", "bonus", "thr",
+            "lembur", "uang saku", "kiriman", "jualan", "omzet", "komisi", "cashback",
+            "dividen", "invoice cair", "pendapatan", "pemasukan"
+        ).any { lower.contains(it) }
 
         if (!isExpenseTrigger && !isIncomeTrigger) return null
 
@@ -104,16 +119,7 @@ class GroundedAiAssistant {
 
         val txType = if (isIncomeTrigger && !isExpenseTrigger) TransactionType.INCOME else TransactionType.EXPENSE
 
-        val matchedCategory = categories.firstOrNull { cat ->
-            cat.type == txType && (
-                lower.contains(cat.name.lowercase(Locale.ROOT).split(" ").first()) ||
-                    (cat.id == "cat_food" && (lower.contains("makan") || lower.contains("kopi") || lower.contains("siang") || lower.contains("malam"))) ||
-                    (cat.id == "cat_transport" && (lower.contains("grab") || lower.contains("gojek") || lower.contains("bensin") || lower.contains("tol") || lower.contains("parkir"))) ||
-                    (cat.id == "cat_utilities" && (lower.contains("listrik") || lower.contains("internet") || lower.contains("wifi") || lower.contains("air"))) ||
-                    (cat.id == "cat_salary" && lower.contains("gaji")) ||
-                    (cat.id == "cat_freelance" && (lower.contains("proyek") || lower.contains("klien") || lower.contains("freelance")))
-                )
-        } ?: categories.firstOrNull { it.type == txType }
+        val matchedCategory = matchCategorySmart(lower, txType, categories)
 
         val matchedAccount = accounts.firstOrNull { acc ->
             lower.contains(acc.name.lowercase(Locale.ROOT)) ||
@@ -122,7 +128,7 @@ class GroundedAiAssistant {
 
         val cleanedTitle = prompt
             .replace(match.value, "", ignoreCase = true)
-            .replace(Regex("""(?i)\b(bayar|beli|pakai|menggunakan|ke|dari|dengan|cash|tunai|rp)\b"""), " ")
+            .replace(Regex("""(?i)\b(catat|tolong|pakai|menggunakan|ke|dari|dengan|cash|tunai|rp)\b"""), " ")
             .replace(Regex("""\s+"""), " ")
             .trim()
             .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ROOT) else it.toString() }
@@ -132,14 +138,61 @@ class GroundedAiAssistant {
             type = txType,
             amountIdr = amountIdr,
             title = cleanedTitle,
-            categoryName = matchedCategory?.name ?: if (txType == TransactionType.INCOME) "Gaji Utama" else "Makanan & Minuman",
+            categoryName = matchedCategory?.name ?: if (txType == TransactionType.INCOME) "Gaji Pekerjaan" else "Beli Makanan & Lauk",
             accountName = matchedAccount?.name ?: "Tunai (Cash)",
             notes = "Dibuat melalui Xynoos AI dari perintah: \"$prompt\""
         )
     }
 
+    private fun matchCategorySmart(
+        lower: String,
+        txType: TransactionType,
+        categories: List<TransactionCategoryModel>
+    ): TransactionCategoryModel? {
+        val byId: (String) -> TransactionCategoryModel? = { id ->
+            categories.firstOrNull { it.id == id && it.type == txType }
+        }
+        if (txType == TransactionType.INCOME) {
+            return when {
+                lower.contains("pkl") || lower.contains("magang") || lower.contains("intern") -> byId("cat_salary_pkl")
+                lower.contains("gaji lain") || lower.contains("sampingan") -> byId("cat_salary_other")
+                lower.contains("bonus") || lower.contains("thr") || lower.contains("lembur") -> byId("cat_bonus_thr")
+                lower.contains("uang saku") || lower.contains("kiriman") || lower.contains("orang tua") -> byId("cat_allowance")
+                lower.contains("jualan") || lower.contains("side hustle") || lower.contains("dagang") -> byId("cat_side_hustle")
+                lower.contains("cashback") || lower.contains("komisi") || lower.contains("hadiah") -> byId("cat_cashback_prize")
+                lower.contains("freelance") || lower.contains("proyek") || lower.contains("klien") -> byId("cat_freelance")
+                lower.contains("investasi") || lower.contains("dividen") || lower.contains("saham") -> byId("cat_investment")
+                lower.contains("bisnis") || lower.contains("omzet") -> byId("cat_business_rev")
+                lower.contains("gaji") -> byId("cat_salary")
+                else -> categories.firstOrNull { cat ->
+                    cat.type == txType && lower.contains(cat.name.lowercase(Locale.ROOT).split(" ").first())
+                } ?: categories.firstOrNull { it.type == txType }
+            }
+        }
+
+        return when {
+            lower.contains("bensin") || lower.contains("bbm") || lower.contains("pertamax") || lower.contains("pertalite") || lower.contains("solar") -> byId("cat_buy_fuel")
+            lower.contains("jajan") || lower.contains("camilan") || lower.contains("snack") || lower.contains("seblak") || lower.contains("gorengan") || lower.contains("cimol") -> byId("cat_buy_snack")
+            lower.contains("kopi") || lower.contains("ngopi") || lower.contains("boba") || lower.contains("cafe") || lower.contains("nongkrong") || lower.contains("matcha") -> byId("cat_coffee_hangout")
+            lower.contains("makan") || lower.contains("lauk") || lower.contains("warteg") || lower.contains("nasi") || lower.contains("bakso") || lower.contains("ayam") -> byId("cat_buy_food")
+            lower.contains("ojol") || lower.contains("grab") || lower.contains("gojek") || lower.contains("maxim") || lower.contains("parkir") || lower.contains("tol") -> byId("cat_ojol_parking")
+            lower.contains("pulsa") || lower.contains("kuota") || lower.contains("paket data") || lower.contains("wifi") || lower.contains("internet") -> byId("cat_pulsa_data")
+            lower.contains("langganan") || lower.contains("netflix") || lower.contains("spotify") || lower.contains("youtube") -> byId("cat_subscriptions")
+            lower.contains("skincare") || lower.contains("barber") || lower.contains("potong rambut") || lower.contains("sabun") -> byId("cat_skincare_grooming")
+            lower.contains("game") || lower.contains("top up") || lower.contains("topup") || lower.contains("hobi") -> byId("cat_hobby_gaming")
+            lower.contains("sedekah") || lower.contains("infaq") || lower.contains("kado") || lower.contains("donasi") -> byId("cat_gift_charity")
+            lower.contains("listrik") || lower.contains("token") || lower.contains("air") || lower.contains("pdam") || lower.contains("tagihan") -> byId("cat_utilities")
+            lower.contains("kos") || lower.contains("kontrakan") || lower.contains("sewa") -> byId("cat_housing")
+            lower.contains("obat") || lower.contains("dokter") || lower.contains("apotek") || lower.contains("klinik") -> byId("cat_health")
+            else -> categories.firstOrNull { cat ->
+                cat.type == txType && lower.contains(cat.name.lowercase(Locale.ROOT).split(" ").first())
+            } ?: categories.firstOrNull { it.type == txType }
+        }
+    }
+
     /**
-     * Builds a grounded, privacy-minimal financial context from verified repository totals and live USD rate.
+     * Builds a grounded, privacy-minimal financial context from verified repository totals,
+     * annual/monthly analytics, account balances, and live USD rate.
      */
     fun buildGroundedContext(
         overview: FinancialOverviewSummary,
@@ -148,7 +201,10 @@ class GroundedAiAssistant {
         categoryBreakdown: List<CategoryBreakdownItem>,
         budgets: List<BudgetProgressSummary>,
         goals: List<FinancialGoalModel>,
-        usdMarket: LiveUsdMarketState = LiveUsdMarketState()
+        usdMarket: LiveUsdMarketState = LiveUsdMarketState(),
+        accounts: List<FinancialAccountModel> = emptyList(),
+        monthlySummary: MonthlyLedgerSummary? = null,
+        annualSummary: AnnualLedgerSummary? = null
     ): String {
         val todayIncome = todayTransactions.filter { !it.isDeleted && it.type == TransactionType.INCOME }.sumOf { it.amountIdr }
         val todayExpense = todayTransactions.filter { !it.isDeleted && it.type == TransactionType.EXPENSE }.sumOf { it.amountIdr }
@@ -156,7 +212,7 @@ class GroundedAiAssistant {
         val topCatSummary = if (categoryBreakdown.isEmpty()) {
             "Belum ada pengeluaran tercatat bulan ini."
         } else {
-            categoryBreakdown.take(4).joinToString("; ") {
+            categoryBreakdown.take(5).joinToString("; ") {
                 "${it.categoryName}: ${IdrFormatter.format(it.amountIdr)} (${String.format(Locale.US, "%.1f", it.percentage)}%)"
             }
         }
@@ -178,30 +234,51 @@ class GroundedAiAssistant {
             }
         }
 
+        val accountsLine = if (accounts.isEmpty()) {
+            "Belum ada rekening."
+        } else {
+            accounts.joinToString("; ") { "${it.name} (${it.accountType.labelId}): ${IdrFormatter.format(it.currentBalanceIdr)}" }
+        }
+
+        val monthlyLine = if (monthlySummary != null) {
+            "Bulan ${monthlySummary.monthLabel}: Masuk ${IdrFormatter.format(monthlySummary.incomeIdr)}, Abis ${IdrFormatter.format(monthlySummary.netExpenseIdr)}, Surplus ${IdrFormatter.format(monthlySummary.netCashFlowIdr)} (Saving rate ${monthlySummary.savingsRatePercent}%, ${monthlySummary.transactionCount} transaksi)"
+        } else {
+            "Bulan Berjalan: Masuk ${IdrFormatter.format(overview.periodIncomeIdr)}, Abis ${IdrFormatter.format(overview.periodExpenseIdr)}"
+        }
+
+        val annualLine = if (annualSummary != null) {
+            "Tahun ${annualSummary.year}: Total Masuk ${IdrFormatter.format(annualSummary.totalIncomeIdr)}, Total Abis ${IdrFormatter.format(annualSummary.totalNetExpenseIdr)}, Sisa/Surplus ${IdrFormatter.format(annualSummary.netCashFlowIdr)} (Saving rate ${annualSummary.savingsRatePercent}%, rata-rata keluar/bln ${IdrFormatter.format(annualSummary.averageMonthlyExpenseIdr)})"
+        } else {
+            "Belum ada rekap tahunan."
+        }
+
+        val recentTxLines = monthTransactions.take(5).joinToString("; ") {
+            "${it.title} (${it.type.labelId} ${IdrFormatter.format(it.amountIdr)} - ${it.categoryName})"
+        }.ifBlank { "Belum ada transaksi bulan ini." }
+
         val cashUsd = IdrFormatter.formatUsdFromIdr(overview.availableCashIdr, usdMarket.currentRateIdr)
         val netWorthUsd = IdrFormatter.formatUsdFromIdr(overview.netWorthIdr, usdMarket.currentRateIdr)
 
         return """
             FAKTA KEUANGAN TERVERIFIKASI & KURS REAL-TIME USD/IDR:
             - Kas Tersedia Saat Ini: ${IdrFormatter.format(overview.availableCashIdr)} (Setara Real-Time: $cashUsd)
-            - Total Aset Terlacak: ${IdrFormatter.format(overview.totalAssetsIdr)}
-            - Total Kewajiban (Utang): ${IdrFormatter.format(overview.totalLiabilitiesIdr)}
+            - Total Aset Terlacak: ${IdrFormatter.format(overview.totalAssetsIdr)} | Kewajiban: ${IdrFormatter.format(overview.totalLiabilitiesIdr)}
             - Kekayaan Bersih (Net Worth): ${IdrFormatter.format(overview.netWorthIdr)} (Setara Real-Time: $netWorthUsd)
-            - Kurs Live Spot USD/IDR (Update 1 Menit): ${IdrFormatter.format(usdMarket.currentRateIdr.toLong())} per $1 USD (High: ${IdrFormatter.format(usdMarket.dayHighIdr.toLong())}, Low: ${IdrFormatter.format(usdMarket.dayLowIdr.toLong())})
-            - Pemasukan Hari Ini: ${IdrFormatter.format(todayIncome)}
-            - Pengeluaran Hari Ini: ${IdrFormatter.format(todayExpense)}
-            - Pemasukan Bulan Ini: ${IdrFormatter.format(overview.periodIncomeIdr)}
-            - Pengeluaran Bulan Ini: ${IdrFormatter.format(overview.periodExpenseIdr)}
-            - Arus Kas Bersih Bulan Ini: ${IdrFormatter.format(overview.netCashFlowIdr)}
-            - Distribusi Pengeluaran Terbesar: $topCatSummary
-            - Status Anggaran (Budget): $budgetSummary
-            - Target Tabungan (Terkoneksi Otomatis ke Total Saldo): $goalSummary
+            - Daftar Saldo Rekening: $accountsLine
+            - Kurs Live Spot USD/IDR: ${IdrFormatter.format(usdMarket.currentRateIdr.toLong())} / $1 USD
+            - Hari Ini: Masuk ${IdrFormatter.format(todayIncome)}, Keluar ${IdrFormatter.format(todayExpense)}
+            - $monthlyLine
+            - $annualLine
+            - Top Pengeluaran Kategori: $topCatSummary
+            - Status Anggaran: $budgetSummary
+            - Target Tabungan: $goalSummary
+            - 5 Transaksi Terbaru: $recentTxLines
         """.trimIndent()
     }
 
     /**
-     * Generates a deterministic, authoritative local answer in Bahasa Indonesia
-     * supporting both ledger queries, live USD queries, and open-ended financial Q&A.
+     * Generates a deterministic, rich, actionable local answer in Bahasa Indonesia
+     * when offline or as structured fallback.
      */
     fun generateDeterministicGroundedAnswer(
         userQuery: String,
@@ -211,11 +288,14 @@ class GroundedAiAssistant {
         budgets: List<BudgetProgressSummary>,
         goals: List<FinancialGoalModel>,
         localDraft: ProposedTransactionDraft?,
-        usdMarket: LiveUsdMarketState = LiveUsdMarketState()
+        usdMarket: LiveUsdMarketState = LiveUsdMarketState(),
+        accounts: List<FinancialAccountModel> = emptyList(),
+        monthlySummary: MonthlyLedgerSummary? = null,
+        annualSummary: AnnualLedgerSummary? = null
     ): GroundedAiResult {
         if (localDraft != null) {
             return GroundedAiResult(
-                explanationMarkdown = "Saya telah menyiapkan draf transaksi **${localDraft.type.labelId}** sebesar **${IdrFormatter.format(localDraft.amountIdr)}** untuk **${localDraft.title}** pada kategori **${localDraft.categoryName}** menggunakan akun **${localDraft.accountName}**.\n\nSilakan tinjau dan ketuk **Konfirmasi & Simpan** di bawah agar transaksi ini tercatat ke buku besar Anda beserta tahun & waktu detailnya.",
+                explanationMarkdown = "Siap! Saya sudah menyiapkan draf transaksi **${localDraft.type.labelId}** sebesar **${IdrFormatter.format(localDraft.amountIdr)}** untuk **${localDraft.title}** di kategori **${localDraft.categoryName}** (rekening **${localDraft.accountName}**).\n\nCek detail di kartu konfirmasi lalu ketuk **Konfirmasi & Simpan** ya!",
                 actionType = "DRAFT_TRANSACTION",
                 proposedDraft = localDraft,
                 isFromLocalFallback = true
@@ -228,39 +308,81 @@ class GroundedAiAssistant {
         val cashUsd = IdrFormatter.formatUsdFromIdr(overview.availableCashIdr, usdMarket.currentRateIdr)
         val netWorthUsd = IdrFormatter.formatUsdFromIdr(overview.netWorthIdr, usdMarket.currentRateIdr)
 
-        // 1. Live USD / Dollar / Valas / Kurs questions
+        // Audit & Evaluasi Keuangan Lengkap ("Audit keuangan saya bulan & tahun ini")
+        if (lower.contains("audit") || lower.contains("kesehatan") || lower.contains("evaluasi") || lower.contains("tahun ini") || lower.contains("boros")) {
+            val savingRate = monthlySummary?.savingsRatePercent
+                ?: if (overview.periodIncomeIdr > 0) (((overview.periodIncomeIdr - overview.periodExpenseIdr) * 100) / overview.periodIncomeIdr).toInt() else 0
+            val healthBadge = when {
+                savingRate >= 30 -> "Sangat Sehat (Surplus ≥30%)"
+                savingRate >= 15 -> "Sehat & Stabil (Surplus 15-29%)"
+                savingRate > 0 -> "Perlu Penghematan Tipis (Surplus <15%)"
+                else -> "Waspada Defisit (Pengeluaran ≥ Pemasukan)"
+            }
+            val topBurn = categoryBreakdown.take(3).joinToString("\n") {
+                "  • **${it.categoryName}**: ${IdrFormatter.format(it.amountIdr)} (${String.format(Locale.US, "%.1f", it.percentage)}%)"
+            }.ifBlank { "  • Belum ada pengeluaran tercatat." }
+            val criticalBudgets = budgets.filter { it.statusLevel != BudgetAlertLevel.SAFE }
+            val budgetWarnText = if (criticalBudgets.isEmpty()) {
+                "Semua anggaran masih aman di bawah 70%."
+            } else {
+                criticalBudgets.joinToString("\n") { "  • ⚠️ **${it.budget.name}**: sudah ${it.utilizationPercent}% (sisa ${IdrFormatter.format(it.remainingAmountIdr)})" }
+            }
+            val annualText = if (annualSummary != null) {
+                "• **Rekap Tahun ${annualSummary.year}**: Masuk **${IdrFormatter.format(annualSummary.totalIncomeIdr)}** | Abis **${IdrFormatter.format(annualSummary.totalNetExpenseIdr)}** | Bersih **${IdrFormatter.format(annualSummary.netCashFlowIdr, showPlusSign = true)}**"
+            } else ""
+            val accountTop = accounts.maxByOrNull { it.currentBalanceIdr }?.let { "${it.name} (${IdrFormatter.format(it.currentBalanceIdr)})" } ?: "-"
+
+            return GroundedAiResult(
+                explanationMarkdown = "**Audit Keuangan Rinci Xynoos AI**\n\n" +
+                    "• **Status Kesehatan Kas**: **$healthBadge** (Rasio Tabungan: **$savingRate%**)\n" +
+                    "• **Total Kas Likuid**: ${IdrFormatter.format(overview.availableCashIdr)} (≈ $cashUsd)\n" +
+                    "• **Rekening Terbesar**: $accountTop\n" +
+                    (if (annualText.isNotEmpty()) "$annualText\n" else "") +
+                    "\n**3 Pos Pengeluaran Terbesar (Audit Kebocoran):**\n$topBurn\n\n" +
+                    "**Status Peringatan Anggaran:**\n$budgetWarnText\n\n" +
+                    "**Langkah Praktis Berikutnya:**\n" +
+                    "1. Tetapkan batas harian agar kategori terbesar turun minimal 10% bulan depan.\n" +
+                    "2. Pisahkan saldo kas masuk (misal Gaji Pekerjaan / PKL) ke rekening tabungan khusus di awal periode.",
+                actionType = "SUMMARY",
+                isFromLocalFallback = true
+            )
+        }
+
+        // Live USD / Dollar / Valas / Kurs questions
         if (lower.contains("usd") || lower.contains("dollar") || lower.contains("dolar") || lower.contains("kurs") || lower.contains("mata uang")) {
             val rateIdr = IdrFormatter.format(usdMarket.currentRateIdr.toLong())
             return GroundedAiResult(
-                explanationMarkdown = "**Analisis Saldo dalam Mata Uang Real USD & Kurs Pasar (Update 1 Menit)**\n\n" +
-                    "• **Kurs Live USD/IDR Saat Ini**: **$rateIdr / $1 USD** (${if (usdMarket.changeIdr >= 0) "+" else ""}${String.format(Locale.US, "%.2f", usdMarket.changePercent)}%)\n" +
-                    "• **Rentang Harian (High / Low)**: ${IdrFormatter.format(usdMarket.dayHighIdr.toLong())} / ${IdrFormatter.format(usdMarket.dayLowIdr.toLong())}\n" +
-                    "• **Kas Tersedia Anda dalam USD**: **$cashUsd** (dari ${IdrFormatter.format(overview.availableCashIdr)})\n" +
-                    "• **Kekayaan Bersih (Net Worth) dalam USD**: **$netWorthUsd** (dari ${IdrFormatter.format(overview.netWorthIdr)})\n\n" +
-                    "**Wawasan Finansial**: Menyimpan sebagian dana darurat atau aset likuid yang dipantau terhadap USD membantu menjaga daya beli terhadap fluktuasi nilai tukar. Anda dapat memantau grafik candlestick 1 menit secara langsung di menu **Pasar & Grafik Live USD**.",
+                explanationMarkdown = "**Analisis Saldo dalam Mata Uang Real USD & Kurs Pasar**\n\n" +
+                    "• **Kurs Live USD/IDR**: **$rateIdr / $1 USD** (${if (usdMarket.changeIdr >= 0) "+" else ""}${String.format(Locale.US, "%.2f", usdMarket.changePercent)}%)\n" +
+                    "• **Rentang Harian**: ${IdrFormatter.format(usdMarket.dayHighIdr.toLong())} (High) / ${IdrFormatter.format(usdMarket.dayLowIdr.toLong())} (Low)\n" +
+                    "• **Kas Tersedia**: **${IdrFormatter.format(overview.availableCashIdr)}** → **$cashUsd**\n" +
+                    "• **Net Worth**: **${IdrFormatter.format(overview.netWorthIdr)}** → **$netWorthUsd**\n\n" +
+                    "**Saran Strategis**: Memantau aset bersih dalam ekuivalen USD membantu mengukur daya beli riil terhadap inflasi global. Cek grafik candlestick 1 menit di tab **Kurs USD**.",
                 actionType = "GENERAL_QA",
                 isFromLocalFallback = true
             )
         }
 
-        // 2. Open Q&A: Investasi, Saham, Reksadana, Emas, Inflasi, Dana Darurat, Pajak, Bisnis
+        // Investment & Emergency Fund Q&A
         if (lower.contains("investasi") || lower.contains("saham") || lower.contains("reksadana") || lower.contains("emas") || lower.contains("inflasi") || lower.contains("dana darurat")) {
-            val recommendedEmergencyFund = if (overview.periodExpenseIdr > 0L) overview.periodExpenseIdr * 6L else 30_000_000L
+            val monthlyExpBase = monthlySummary?.netExpenseIdr?.takeIf { it > 0L } ?: overview.periodExpenseIdr
+            val recommendedEmergencyFund = if (monthlyExpBase > 0L) monthlyExpBase * 6L else 18_000_000L
+            val coverageMonths = if (monthlyExpBase > 0L) (overview.availableCashIdr.toDouble() / monthlyExpBase.toDouble()) else 0.0
             return GroundedAiResult(
-                explanationMarkdown = "**Konsultasi & Tanya Jawab Strategi Keuangan Xynoos AI**\n\n" +
-                    "Berdasarkan pertanyaan Anda mengenai **\"$userQuery\"** serta posisi keuangan Anda saat ini:\n" +
-                    "• **Posisi Kas Likuid Anda**: ${IdrFormatter.format(overview.availableCashIdr)} (≈ $cashUsd)\n" +
-                    "• **Rekomendasi Dana Darurat Ideal (6x Pengeluaran Bulanan)**: ${IdrFormatter.format(recommendedEmergencyFund)}\n\n" +
-                    "**Panduan Praktis Berlapis**:\n" +
-                    "1. **Lapisan Likuiditas (Dana Darurat)**: Pastikan kas likuid minimal 3–6 kali pengeluaran bulanan tersimpan di rekening tabungan/pasar uang yang aman.\n" +
-                    "2. **Lindung Nilai & Valas (USD/Emas)**: Pantau nilai kekayaan bersih Anda dalam USD ($netWorthUsd) agar tahan terhadap inflasi tahunan.\n" +
-                    "3. **Investasi Bertumbuh**: Alokasikan surplus arus kas bersih (${IdrFormatter.format(overview.netCashFlowIdr, showPlusSign = true)}) secara konsisten ke instrumen produktif sesuai profil risiko Anda.",
+                explanationMarkdown = "**Konsultasi Dana Darurat & Strategi Investasi Personal**\n\n" +
+                    "• **Kas Likuid Anda**: ${IdrFormatter.format(overview.availableCashIdr)} (≈ $cashUsd)\n" +
+                    "• **Cakupan Dana Darurat Saat Ini**: **${String.format(Locale.US, "%.1f", coverageMonths)} bulan** pengeluaran\n" +
+                    "• **Target Ideal (6x Pengeluaran Bulanan)**: ${IdrFormatter.format(recommendedEmergencyFund)}\n\n" +
+                    "**Rekomendasi Bertahap:**\n" +
+                    "1. **Amankan 3–6x pengeluaran** di tabungan likuid/RDPU terlebih dahulu sebelum mengambil aset volatil.\n" +
+                    "2. **Alokasi Surplus Bulanan (${IdrFormatter.format(overview.netCashFlowIdr, showPlusSign = true)})**: Terapkan rumus 50% kebutuhan pokok, 30% gaya hidup (jajan/nongkrong), 20% tabungan & investasi.\n" +
+                    "3. **Diversifikasi**: Kombinasikan instrumen likuid (RDPU/Deposito), lindung nilai (Emas/USD), dan pertumbuhan jangka panjang.",
                 actionType = "GENERAL_QA",
                 isFromLocalFallback = true
             )
         }
 
-        // 3. Goal projection query ("Kalau saya menabung Rp500.000 per bulan, kapan target saya tercapai?")
+        // Goal projection query
         if (lower.contains("menabung") || lower.contains("target") || lower.contains("kapan")) {
             val regex = Regex("""(\d+[.,]?\d*)\s*(miliar|juta|jt|ribu|rb|k)?""")
             val match = regex.find(lower.replace("rp", ""))
@@ -279,19 +401,18 @@ class GroundedAiAssistant {
                 )
                 val remaining = (primaryGoal.targetAmountIdr - effectiveSaved).coerceAtLeast(0L)
                 GroundedAiResult(
-                    explanationMarkdown = "**Analisis Proyeksi Target Tabungan (Terkoneksi Otomatis ke Total Saldo)**\n\n" +
-                        "• **Target Aktif**: ${primaryGoal.name}\n" +
-                        "• **Saldo Terkoneksi Saat Ini**: ${IdrFormatter.format(effectiveSaved)} (≈ ${IdrFormatter.formatUsdFromIdr(effectiveSaved, usdMarket.currentRateIdr)}) dari target ${IdrFormatter.format(primaryGoal.targetAmountIdr)}\n" +
-                        "• **Sisa Kebutuhan Dana**: ${IdrFormatter.format(remaining)}\n" +
-                        "• **Asumsi Setoran Rutin**: ${IdrFormatter.format(monthlySaving)} / bulan\n" +
-                        "• **Estimasi Waktu Tercapai**: **${months ?: 0} bulan**\n\n" +
-                        "*Catatan: Target tabungan di XynoosFinance langsung terkoneksi otomatis dengan total saldo kas Anda tanpa perlu input penambahan manual.*",
+                    explanationMarkdown = "**Proyeksi Pencapaian Target Tabungan**\n\n" +
+                        "• **Target**: ${primaryGoal.name}\n" +
+                        "• **Saldo Terkoneksi Saat Ini**: ${IdrFormatter.format(effectiveSaved)} dari ${IdrFormatter.format(primaryGoal.targetAmountIdr)}\n" +
+                        "• **Kekurangan Dana**: ${IdrFormatter.format(remaining)}\n" +
+                        "• **Jika Menabung**: ${IdrFormatter.format(monthlySaving)} / bulan → Tercapai dalam **${months ?: 0} bulan**\n\n" +
+                        "💡 *Tip: Aktifkan aturan alokasi otomatis atau sisihkan begitu Gaji/PKL masuk agar target tercapai lebih cepat.*",
                     actionType = "GOAL_PROJECTION",
                     isFromLocalFallback = true
                 )
             } else {
                 GroundedAiResult(
-                    explanationMarkdown = "Anda belum memiliki target tabungan aktif, namun total saldo kas Anda saat ini adalah **${IdrFormatter.format(overview.availableCashIdr)}** (≈ $cashUsd). Dengan asumsi menabung **${IdrFormatter.format(monthlySaving)}/bulan**, dalam 12 bulan Anda akan mengumpulkan tambahan **${IdrFormatter.format(monthlySaving * 12)}**.",
+                    explanationMarkdown = "Anda belum membuat target tabungan di menu **Target**, namun kas Anda saat ini **${IdrFormatter.format(overview.availableCashIdr)}** (≈ $cashUsd). Dengan menabung **${IdrFormatter.format(monthlySaving)}/bulan**, dalam setahun Anda menambah **${IdrFormatter.format(monthlySaving * 12)}**!",
                     actionType = "GOAL_PROJECTION",
                     isFromLocalFallback = true
                 )
@@ -300,10 +421,10 @@ class GroundedAiAssistant {
 
         if (lower.contains("hari ini")) {
             return GroundedAiResult(
-                explanationMarkdown = "**Ringkasan Aktivitas Hari Ini (Data Buku Besar)**\n\n" +
-                    "• **Pemasukan Hari Ini**: ${IdrFormatter.format(todayIncome)}\n" +
-                    "• **Pengeluaran Hari Ini**: ${IdrFormatter.format(todayExpense)}\n" +
-                    "• **Selisih Harian**: ${IdrFormatter.format(todayIncome - todayExpense, showPlusSign = true)}\n" +
+                explanationMarkdown = "**Ringkasan Aktivitas Hari Ini**\n\n" +
+                    "• **Pemasukan**: ${IdrFormatter.format(todayIncome)}\n" +
+                    "• **Pengeluaran**: ${IdrFormatter.format(todayExpense)}\n" +
+                    "• **Selisih Hari Ini**: ${IdrFormatter.format(todayIncome - todayExpense, showPlusSign = true)}\n" +
                     "• **Total Kas Tersedia**: ${IdrFormatter.format(overview.availableCashIdr)} (≈ $cashUsd)",
                 actionType = "SUMMARY",
                 isFromLocalFallback = true
@@ -311,27 +432,27 @@ class GroundedAiAssistant {
         }
 
         if (lower.contains("kategori") || lower.contains("paling banyak")) {
-            val top = categoryBreakdown.firstOrNull()
-            val body = if (top == null) {
-                "Belum ada pengeluaran tercatat pada periode ini."
-            } else {
-                "Kategori dengan pengeluaran terbesar bulan ini adalah **${top.categoryName}** sebesar **${IdrFormatter.format(top.amountIdr)}** (${String.format(Locale.US, "%.1f", top.percentage)}% dari total pengeluaran ${IdrFormatter.format(overview.periodExpenseIdr)})."
-            }
+            val topList = categoryBreakdown.take(4).mapIndexed { idx, item ->
+                "${idx + 1}. **${item.categoryName}**: ${IdrFormatter.format(item.amountIdr)} (${String.format(Locale.US, "%.1f", item.percentage)}% • ${item.transactionCount}x)"
+            }.joinToString("\n").ifBlank { "Belum ada pengeluaran tercatat pada periode ini." }
             return GroundedAiResult(
-                explanationMarkdown = "**Analisis Distribusi Kategori Pengeluaran**\n\n$body",
+                explanationMarkdown = "**Analisis Rincian Kategori Pengeluaran Terbesar**\n\n$topList\n\n💡 *Tip: Kamu bisa mengeklik kategori mana pun di halaman Anggaran Bulanan & Tahunan untuk melihat riwayat detail transaksinya.*",
                 actionType = "SPENDING_TREND",
                 isFromLocalFallback = true
             )
         }
 
         if (lower.contains("anggaran") || lower.contains("budget") || lower.contains("sisa")) {
-            val foodBudget = budgets.firstOrNull { it.budget.categoryName.contains("Makan", ignoreCase = true) } ?: budgets.firstOrNull()
-            val detail = if (foodBudget != null) {
-                "• **${foodBudget.budget.name} (${foodBudget.budget.categoryName})**: Terpakai ${IdrFormatter.format(foodBudget.spentAmountIdr)} dari batas ${IdrFormatter.format(foodBudget.budget.limitAmountIdr)} (**${foodBudget.utilizationPercent}%**).\n" +
-                    "• **Sisa Anggaran**: **${IdrFormatter.format(foodBudget.remainingAmountIdr)}**"
+            val detail = if (budgets.isNotEmpty()) {
+                budgets.joinToString("\n") {
+                    "• **${it.budget.name}** (${it.budget.categoryName}): Terpakai **${it.utilizationPercent}%** (${IdrFormatter.format(it.spentAmountIdr)} / ${IdrFormatter.format(it.budget.limitAmountIdr)}) • Sisa **${IdrFormatter.format(it.remainingAmountIdr)}**"
+                }
             } else {
-                "• **Total Pengeluaran Bulan Ini**: ${IdrFormatter.format(overview.periodExpenseIdr)}\n" +
-                    "• **Saran Anggaran 50/30/20**: Dari pemasukan ${IdrFormatter.format(overview.periodIncomeIdr)}, alokasikan maks. ${IdrFormatter.format((overview.periodIncomeIdr * 50) / 100)} untuk kebutuhan pokok, ${IdrFormatter.format((overview.periodIncomeIdr * 30) / 100)} untuk gaya hidup, dan minimal ${IdrFormatter.format((overview.periodIncomeIdr * 20) / 100)} untuk tabungan."
+                val baseIncome = monthlySummary?.incomeIdr?.takeIf { it > 0L } ?: overview.periodIncomeIdr
+                "Belum ada anggaran khusus. Rekomendasi alokasi **50 / 30 / 20** dari pemasukan ${IdrFormatter.format(baseIncome)}:\n" +
+                    "• Kebutuhan Pokok (50%): ${IdrFormatter.format((baseIncome * 50) / 100)}\n" +
+                    "• Jajan & Gaya Hidup (30%): ${IdrFormatter.format((baseIncome * 30) / 100)}\n" +
+                    "• Tabungan & Investasi (20%): ${IdrFormatter.format((baseIncome * 20) / 100)}"
             }
             return GroundedAiResult(
                 explanationMarkdown = "**Evaluasi & Rekomendasi Anggaran**\n\n$detail",
@@ -341,24 +462,27 @@ class GroundedAiAssistant {
         }
 
         val topCatText = categoryBreakdown.firstOrNull()?.let { "${it.categoryName} (${IdrFormatter.format(it.amountIdr)})" } ?: "Belum ada"
+        val annualLine = annualSummary?.let {
+            "\n• **Rekap Tahun ${it.year}**: Masuk ${IdrFormatter.format(it.totalIncomeIdr)} | Abis ${IdrFormatter.format(it.totalNetExpenseIdr)}"
+        } ?: ""
+
         return GroundedAiResult(
-            explanationMarkdown = "**Jawaban & Konsultasi Xynoos AI untuk: \"$userQuery\"**\n\n" +
+            explanationMarkdown = "**Konsultasi Xynoos AI untuk: \"$userQuery\"**\n\n" +
                 "• **Kas Tersedia**: ${IdrFormatter.format(overview.availableCashIdr)} _(≈ $cashUsd)_\n" +
-                "• **Kekayaan Bersih (Net Worth)**: ${IdrFormatter.format(overview.netWorthIdr)} _(≈ $netWorthUsd)_\n" +
-                "• **Kurs Spot USD/IDR (1m)**: ${IdrFormatter.format(usdMarket.currentRateIdr.toLong())} / $1 USD\n" +
-                "• **Pemasukan Periode Ini**: ${IdrFormatter.format(overview.periodIncomeIdr)}\n" +
-                "• **Pengeluaran Periode Ini**: ${IdrFormatter.format(overview.periodExpenseIdr)}\n" +
-                "• **Arus Kas Bersih**: ${IdrFormatter.format(overview.netCashFlowIdr, showPlusSign = true)}\n" +
-                "• **Pengeluaran Terbesar**: $topCatText\n" +
-                "• **Progres Target Tabungan (Otomatis)**: ${overview.savingsProgressPercent}%\n\n" +
-                "**Saran Strategis**: Anda dapat bertanya apa saja kepada saya—mulai dari strategi menabung, analisis kurs Dollar (USD), perencanaan pajak bisnis, hingga perintah catat transaksi otomatis.",
+                "• **Kekayaan Bersih**: ${IdrFormatter.format(overview.netWorthIdr)} _(≈ $netWorthUsd)_\n" +
+                "• **Bulan Ini**: Masuk ${IdrFormatter.format(overview.periodIncomeIdr)} • Keluar ${IdrFormatter.format(overview.periodExpenseIdr)}$annualLine\n" +
+                "• **Pos Terbesar**: $topCatText\n\n" +
+                "**Contoh hal lain yang bisa langsung kamu lakukan:**\n" +
+                "• Ketik transaksi langsung: *\"Beli bensin 35 ribu\"*, *\"Beli jajan 20rb\"*, atau *\"Terima gaji PKL 1.5 juta\"*\n" +
+                "• Minta analisis: *\"Audit keuangan saya bulan & tahun ini\"* atau *\"Evaluasi anggaran jajan & makan saya\"*",
             actionType = "GENERAL_QA",
             isFromLocalFallback = true
         )
     }
 
     /**
-     * Queries Gemini (`gemini-3.5-flash-lite`) with grounded financial facts, live USD rate, and open Q&A capability.
+     * Queries Gemini (`gemini-3.5-flash-lite`) with grounded financial facts,
+     * annual/monthly context, recent session chat history, and live USD rate.
      */
     suspend fun analyzeWithGroundedGemini(
         userQuery: String,
@@ -368,7 +492,10 @@ class GroundedAiAssistant {
         allTransactions: List<TransactionModel>,
         budgets: List<BudgetProgressSummary>,
         goals: List<FinancialGoalModel>,
-        usdMarket: LiveUsdMarketState = LiveUsdMarketState()
+        usdMarket: LiveUsdMarketState = LiveUsdMarketState(),
+        monthlySummary: MonthlyLedgerSummary? = null,
+        annualSummary: AnnualLedgerSummary? = null,
+        recentHistory: List<AiMessageModel> = emptyList()
     ): GroundedAiResult {
         val todayTxs = FinancialCalculator.filterTransactionsByPeriod(allTransactions, DashboardPeriod.TODAY)
         val monthTxs = FinancialCalculator.filterTransactionsByPeriod(allTransactions, DashboardPeriod.MONTH)
@@ -382,25 +509,37 @@ class GroundedAiAssistant {
             categoryBreakdown = catBreakdown,
             budgets = budgets,
             goals = goals,
-            usdMarket = usdMarket
+            usdMarket = usdMarket,
+            accounts = accounts,
+            monthlySummary = monthlySummary,
+            annualSummary = annualSummary
         )
 
+        val historyText = recentHistory
+            .takeLast(6)
+            .joinToString("\n") { msg ->
+                val speaker = if (msg.role == "user") "Pengguna" else "Xynoos AI"
+                "$speaker: ${msg.content.replace("\n", " ").take(240)}"
+            }
+
         val fullPrompt = """
-            Anda adalah Xynoos AI Finance Assistant & Advisor, konsultan keuangan pribadi, bisnis, dan ekonomi profesional berbahasa Indonesia.
-            Anda BUKAN sekadar pencatat transaksi, melainkan juga mitra tanya-jawab (Q&A) cerdas yang bisa menjawab pertanyaan apa pun seputar keuangan, investasi, saham, valuta asing (USD/IDR), perencanaan tabungan, bisnis, maupun pertanyaan umum pengguna dengan ramah dan mendalam.
+            Anda adalah Xynoos AI Finance Advisor, konsultan keuangan pribadi, mahasiswa/PKL, UMKM, & ekonomi profesional berbahasa Indonesia.
+            Gaya bicara: cerdas, suportif, terstruktur dengan poin jelas & angka pasti, serta memberi langkah tindakan konkret (actionable advice).
 
             ATURAN WAJIB:
-            1. Untuk data saldo/transaksi pengguna, gunakan HANYA angka dari FAKTA KEUANGAN TERVERIFIKASI di bawah. Jangan pernah mengarang saldo pengguna.
-            2. Jika pengguna bertanya hal umum / konsultasi / tanya-jawab (misal strategi investasi, kurs dollar, inflasi, tips hemat, bisnis, atau pertanyaan bebas), jawab secara komprehensif, edukatif, dan hubungkan secara relevan dengan kondisi saldo/USD pengguna. Set actionType = "GENERAL_QA" dan hasProposedTransaction = false.
-            3. Gunakan format Rupiah (contoh: Rp1.500.000) dan sertakan ekuivalen USD jika relevan.
-            4. HANYA jika pengguna secara eksplisit memerintahkan pencatatan transaksi baru (misal: "Bayar makan siang 35 ribu pakai cash"), set hasProposedTransaction = true dan isi txType, txAmountIdr, txTitle, txCategoryName, txAccountName.
+            1. Gunakan HANYA angka terverifikasi dari FAKTA KEUANGAN TERVERIFIKASI di bawah. Jangan pernah mengarang angka saldo pengguna.
+            2. Pertahankan kesinambungan topik dari RIWAYAT SESI CHAT jika pengguna merujuk percakapan sebelumnya.
+            3. Berikan analisis mendalam, deteksi kebocoran pengeluaran (seperti jajan/kopi/bensin berlebih), strategi menabung, dan perbandingan pemasukan vs pengeluaran bulanan/tahunan bila relevan.
+            4. HANYA jika pengguna secara eksplisit memerintahkan pencatatan transaksi baru (misal: "Beli bensin 35 ribu", "Beli jajan 20rb", "Terima gaji PKL 1.5 juta ke BCA"), set hasProposedTransaction = true dan isi txType, txAmountIdr, txTitle, txCategoryName (cocokkan paling akurat dari Daftar Kategori), txAccountName.
+            5. Untuk pertanyaan/konsultasi/audit/saran, set hasProposedTransaction = false.
 
             $groundedContext
 
             Daftar Akun Pengguna: ${accounts.joinToString(", ") { it.name }}
-            Daftar Kategori: ${categories.joinToString(", ") { "${it.name} (${it.type.name})" }}
+            Daftar Kategori Tersedia: ${categories.joinToString(", ") { "${it.name} (${it.type.name})" }}
 
-            Pertanyaan / Perintah Pengguna: "$userQuery"
+            ${if (historyText.isNotBlank()) "RIWAYAT SESI CHAT TERAKHIR:\n$historyText\n" else ""}
+            Pesan Pengguna Terbaru: "$userQuery"
         """.trimIndent()
 
         return try {
@@ -410,7 +549,10 @@ class GroundedAiAssistant {
             val jsonText = response.text ?: throw IllegalStateException("Empty Gemini response")
             val json = JSONObject(jsonText)
             val explanation = json.optString("explanation").ifBlank {
-                generateDeterministicGroundedAnswer(userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft, usdMarket).explanationMarkdown
+                generateDeterministicGroundedAnswer(
+                    userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft,
+                    usdMarket, accounts, monthlySummary, annualSummary
+                ).explanationMarkdown
             }
             val actionType = json.optString("actionType", "GENERAL_QA")
             val hasProposed = json.optBoolean("hasProposedTransaction", false)
@@ -438,12 +580,18 @@ class GroundedAiAssistant {
             )
         } catch (e: TimeoutCancellationException) {
             Log.e(TAG, "Gemini request timed out after 60s; using deterministic grounded engine", e)
-            generateDeterministicGroundedAnswer(userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft, usdMarket)
+            generateDeterministicGroundedAnswer(
+                userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft,
+                usdMarket, accounts, monthlySummary, annualSummary
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "Gemini AI call failed; providing deterministic grounded analysis", e)
-            generateDeterministicGroundedAnswer(userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft, usdMarket)
+            generateDeterministicGroundedAnswer(
+                userQuery, overview, todayTxs, catBreakdown, budgets, goals, localDraft,
+                usdMarket, accounts, monthlySummary, annualSummary
+            )
         }
     }
 

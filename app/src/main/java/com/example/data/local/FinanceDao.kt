@@ -158,6 +158,53 @@ interface FinanceDao {
     @Query("DELETE FROM invoices WHERE id = :id AND userId = :userId")
     suspend fun deleteInvoice(id: String, userId: String)
 
+    // Incremental Low-RAM Sync Queries (only fetch unsynced records)
+    @Query("SELECT * FROM accounts WHERE userId = :userId AND syncStatus != 'SYNCED'")
+    suspend fun getUnsyncedAccounts(userId: String): List<AccountEntity>
+
+    @Query("SELECT * FROM transactions WHERE userId = :userId AND syncStatus != 'SYNCED'")
+    suspend fun getUnsyncedTransactions(userId: String): List<TransactionEntity>
+
+    @Query("SELECT * FROM budgets WHERE userId = :userId AND syncStatus != 'SYNCED'")
+    suspend fun getUnsyncedBudgets(userId: String): List<BudgetEntity>
+
+    @Query("SELECT * FROM goals WHERE userId = :userId AND syncStatus != 'SYNCED'")
+    suspend fun getUnsyncedGoals(userId: String): List<GoalEntity>
+
+    @Query("SELECT * FROM invoices WHERE userId = :userId AND syncStatus != 'SYNCED'")
+    suspend fun getUnsyncedInvoices(userId: String): List<InvoiceEntity>
+
+    // AI Persistent Chat Sessions & Messages
+    @Query("SELECT * FROM ai_sessions WHERE userId = :userId ORDER BY updatedAtMillis DESC")
+    fun observeAiSessions(userId: String): Flow<List<AiSessionEntity>>
+
+    @Query("SELECT * FROM ai_sessions WHERE userId = :userId ORDER BY updatedAtMillis DESC")
+    suspend fun getAiSessions(userId: String): List<AiSessionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAiSession(session: AiSessionEntity)
+
+    @Query("DELETE FROM ai_sessions WHERE id = :sessionId AND userId = :userId")
+    suspend fun deleteAiSession(sessionId: String, userId: String)
+
+    @Query("SELECT * FROM ai_messages WHERE userId = :userId AND sessionId = :sessionId ORDER BY timestampMillis ASC")
+    fun observeAiMessages(userId: String, sessionId: String): Flow<List<AiMessageEntity>>
+
+    @Query("SELECT * FROM ai_messages WHERE userId = :userId AND sessionId = :sessionId ORDER BY timestampMillis ASC")
+    suspend fun getAiMessages(userId: String, sessionId: String): List<AiMessageEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertAiMessage(message: AiMessageEntity)
+
+    @Query("DELETE FROM ai_messages WHERE sessionId = :sessionId AND userId = :userId")
+    suspend fun deleteMessagesForSession(sessionId: String, userId: String)
+
+    @Transaction
+    suspend fun deleteAiSessionAndMessages(sessionId: String, userId: String) {
+        deleteMessagesForSession(sessionId, userId)
+        deleteAiSession(sessionId, userId)
+    }
+
     // User Account Cleanup (Account Deletion / Isolation)
     @Transaction
     suspend fun deleteAllUserData(userId: String) {
@@ -169,6 +216,8 @@ interface FinanceDao {
         deleteUserGoalContributions(userId)
         deleteUserRecurring(userId)
         deleteUserInvoices(userId)
+        deleteUserAiMessages(userId)
+        deleteUserAiSessions(userId)
     }
 
     @Query("DELETE FROM transactions WHERE userId = :userId")
@@ -194,6 +243,12 @@ interface FinanceDao {
 
     @Query("DELETE FROM invoices WHERE userId = :userId")
     suspend fun deleteUserInvoices(userId: String)
+
+    @Query("DELETE FROM ai_messages WHERE userId = :userId")
+    suspend fun deleteUserAiMessages(userId: String)
+
+    @Query("DELETE FROM ai_sessions WHERE userId = :userId")
+    suspend fun deleteUserAiSessions(userId: String)
 }
 
 @Database(
@@ -205,9 +260,11 @@ interface FinanceDao {
         GoalEntity::class,
         GoalContributionEntity::class,
         RecurringTransactionEntity::class,
-        InvoiceEntity::class
+        InvoiceEntity::class,
+        AiSessionEntity::class,
+        AiMessageEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = false
 )
 abstract class XynoosDatabase : RoomDatabase() {
@@ -225,6 +282,51 @@ abstract class XynoosDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `ai_sessions` (
+                        `id` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `title` TEXT NOT NULL,
+                        `createdAtMillis` INTEGER NOT NULL,
+                        `updatedAtMillis` INTEGER NOT NULL,
+                        `lastMessagePreview` TEXT NOT NULL,
+                        `messageCount` INTEGER NOT NULL,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ai_sessions_userId_updatedAtMillis` ON `ai_sessions` (`userId`, `updatedAtMillis`)"
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `ai_messages` (
+                        `id` TEXT NOT NULL,
+                        `sessionId` TEXT NOT NULL,
+                        `userId` TEXT NOT NULL,
+                        `role` TEXT NOT NULL,
+                        `content` TEXT NOT NULL,
+                        `timestampMillis` INTEGER NOT NULL,
+                        `draftType` TEXT,
+                        `draftAmountIdr` INTEGER,
+                        `draftTitle` TEXT,
+                        `draftCategoryName` TEXT,
+                        `draftAccountName` TEXT,
+                        `draftNotes` TEXT,
+                        `draftDateMillis` INTEGER,
+                        PRIMARY KEY(`id`)
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_ai_messages_userId_sessionId_timestampMillis` ON `ai_messages` (`userId`, `sessionId`, `timestampMillis`)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): XynoosDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -232,7 +334,7 @@ abstract class XynoosDatabase : RoomDatabase() {
                     XynoosDatabase::class.java,
                     "xynoos_finance.db"
                 )
-                    .addMigrations(MIGRATION_1_2)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

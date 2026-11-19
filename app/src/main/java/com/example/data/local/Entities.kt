@@ -4,6 +4,8 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.domain.AccountType
+import com.example.domain.AiMessageModel
+import com.example.domain.AiSessionModel
 import com.example.domain.AllocationRuleType
 import com.example.domain.BudgetModel
 import com.example.domain.ContributionType
@@ -14,6 +16,7 @@ import com.example.domain.GoalPriority
 import com.example.domain.InvoiceReferenceModel
 import com.example.domain.InvoiceStatus
 import com.example.domain.InvoiceType
+import com.example.domain.ProposedTransactionDraft
 import com.example.domain.RecurringTransactionModel
 import com.example.domain.SyncStatus
 import com.example.domain.TransactionCategoryModel
@@ -432,4 +435,99 @@ fun InvoiceReferenceModel.toEntity() = InvoiceEntity(
     syncStatus = syncStatus.name,
     version = version,
     updatedAtMillis = updatedAtMillis
+)
+
+@Entity(
+    tableName = "ai_sessions",
+    indices = [Index(value = ["userId", "updatedAtMillis"])]
+)
+data class AiSessionEntity(
+    @PrimaryKey val id: String,
+    val userId: String,
+    val title: String,
+    val createdAtMillis: Long,
+    val updatedAtMillis: Long,
+    val lastMessagePreview: String,
+    val messageCount: Int
+) {
+    fun toDomain() = AiSessionModel(
+        id = id,
+        userId = userId,
+        title = title,
+        createdAtMillis = createdAtMillis,
+        updatedAtMillis = updatedAtMillis,
+        lastMessagePreview = lastMessagePreview,
+        messageCount = messageCount
+    )
+}
+
+fun AiSessionModel.toEntity() = AiSessionEntity(
+    id = id,
+    userId = userId,
+    title = title,
+    createdAtMillis = createdAtMillis,
+    updatedAtMillis = updatedAtMillis,
+    lastMessagePreview = lastMessagePreview,
+    messageCount = messageCount
+)
+
+@Entity(
+    tableName = "ai_messages",
+    indices = [Index(value = ["userId", "sessionId", "timestampMillis"])]
+)
+data class AiMessageEntity(
+    @PrimaryKey val id: String,
+    val sessionId: String,
+    val userId: String,
+    val role: String,
+    val content: String,
+    val timestampMillis: Long,
+    val draftType: String?,
+    val draftAmountIdr: Long?,
+    val draftTitle: String?,
+    val draftCategoryName: String?,
+    val draftAccountName: String?,
+    val draftNotes: String?,
+    val draftDateMillis: Long?
+) {
+    fun toDomain(): AiMessageModel {
+        val safeDraftType = draftType
+        val draft = if (!safeDraftType.isNullOrBlank() && (draftAmountIdr ?: 0L) > 0L) {
+            ProposedTransactionDraft(
+                type = runCatching { TransactionType.valueOf(safeDraftType) }.getOrDefault(TransactionType.EXPENSE),
+                amountIdr = draftAmountIdr ?: 0L,
+                title = draftTitle.orEmpty(),
+                categoryName = draftCategoryName.orEmpty(),
+                accountName = draftAccountName.orEmpty(),
+                notes = draftNotes.orEmpty(),
+                dateMillis = draftDateMillis ?: timestampMillis
+            )
+        } else null
+
+        return AiMessageModel(
+            id = id,
+            sessionId = sessionId,
+            userId = userId,
+            role = role,
+            content = content,
+            timestampMillis = timestampMillis,
+            proposedDraft = draft
+        )
+    }
+}
+
+fun AiMessageModel.toEntity() = AiMessageEntity(
+    id = id,
+    sessionId = sessionId,
+    userId = userId,
+    role = role,
+    content = content,
+    timestampMillis = timestampMillis,
+    draftType = proposedDraft?.type?.name,
+    draftAmountIdr = proposedDraft?.amountIdr,
+    draftTitle = proposedDraft?.title,
+    draftCategoryName = proposedDraft?.categoryName,
+    draftAccountName = proposedDraft?.accountName,
+    draftNotes = proposedDraft?.notes,
+    draftDateMillis = proposedDraft?.dateMillis
 )

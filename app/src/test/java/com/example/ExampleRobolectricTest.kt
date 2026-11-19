@@ -153,14 +153,34 @@ class ExampleRobolectricTest {
             budgets = emptyList(),
             goals = emptyList()
         )
+        val annualSummary = FinancialCalculator.calculateAnnualLedgerSummary(
+            year = 2025,
+            allTransactions = txs,
+            categories = emptyList(),
+            budgets = emptyList()
+        )
+        val typeBreakdown = FinancialCalculator.calculateTypeBreakdown(txs)
+        val accountActivities = FinancialCalculator.calculateAccountActivities(listOf(account), txs)
+        val incomeBreakdown = FinancialCalculator.calculateIncomeCategoryBreakdown(txs, emptyList())
+        val expenseBreakdown = FinancialCalculator.calculateCategoryBreakdown(txs, emptyList())
+
         val pdfResult = PdfReportGenerator.generateFinancialReportPdf(
             context = context,
-            config = PdfReportConfig(reportTitle = "Laporan Keuangan Kuartal IV"),
+            config = PdfReportConfig(
+                reportTitle = "Laporan Keuangan Kuartal IV",
+                periodLabel = "Tahun 2025",
+                scope = com.example.export.PdfReportScope.FULL_YEAR
+            ),
             prefs = prefs,
             overview = overview,
             accounts = listOf(account),
             transactions = txs,
-            categoryBreakdown = emptyList(),
+            categoryBreakdown = expenseBreakdown,
+            incomeCategoryBreakdown = incomeBreakdown,
+            typeBreakdown = typeBreakdown,
+            accountActivities = accountActivities,
+            annualSummary = annualSummary,
+            usdRateIdr = 16250.0,
             budgets = emptyList(),
             goals = emptyList(),
             businessPl = FinancialCalculator.calculateBusinessProfitLoss(txs, emptyList()),
@@ -178,12 +198,64 @@ class ExampleRobolectricTest {
             overview = overview,
             usdMarket = com.example.data.remote.LiveUsdMarketState(currentRateIdr = 16250.0),
             goals = emptyList(),
-            periodLabel = "Bulan Ini"
+            periodLabel = "Bulan Ini",
+            categoryBreakdown = expenseBreakdown,
+            accounts = listOf(account),
+            annualSummary = annualSummary
         )
         assertTrue(pngResult.isSuccess)
         val pngInfo = pngResult.getOrThrow()
         assertTrue(pngInfo.file.exists())
         assertTrue(pngInfo.file.length() > 0L)
+    }
+
+    @Test
+    fun persistentAiSessionsAndIncrementalUnsyncedQueries_workAcrossReopens() = runBlocking {
+        val userId = "ai_session_user"
+        val dao = database.financeDao()
+        val repo = OfflineFirstFinanceRepository(
+            dao = dao,
+            cloudRepo = null,
+            userId = userId
+        )
+
+        val defaultSessionId = repo.ensureDefaultAiSession("Halo, ada yang bisa dibantu?")
+        val s2 = repo.createAiSession("Audit Bulan Ini", "Siap menganalisis bulan ini.")
+        assertTrue(s2.id != defaultSessionId)
+
+        repo.saveAiMessage(
+            com.example.domain.AiMessageModel(
+                id = "msg_u1",
+                sessionId = s2.id,
+                userId = userId,
+                role = "user",
+                content = "Bagaimana kondisi pengeluaran bulan ini?",
+                timestampMillis = 1_760_000_100_000L
+            )
+        )
+        val loadedMessages = repo.getAiMessagesForSession(s2.id)
+        assertEquals(2, loadedMessages.size)
+        assertTrue(loadedMessages.any { it.id == "msg_u1" })
+
+        repo.renameAiSession(s2.id, "Evaluasi Pengeluaran Oktober")
+        val sessions = dao.getAiSessions(userId)
+        assertEquals("Evaluasi Pengeluaran Oktober", sessions.first { it.id == s2.id }.title)
+
+        repo.deleteAiSession(s2.id)
+        assertEquals(0, repo.getAiMessagesForSession(s2.id).size)
+
+        // Check incremental unsynced detection when offline
+        val acc = FinancialAccountModel(
+            id = "acc_offline",
+            userId = userId,
+            name = "Dompet Tunai",
+            accountType = AccountType.CASH,
+            openingBalanceIdr = 250_000L,
+            currentBalanceIdr = 250_000L,
+            colorHex = "#49E0A0"
+        )
+        repo.saveAccount(acc)
+        assertTrue(dao.getUnsyncedAccounts(userId).any { it.id == "acc_offline" })
     }
 }
 

@@ -25,22 +25,37 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalance
+import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Badge
+import androidx.compose.material.icons.filled.BakeryDining
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.BusinessCenter
 import androidx.compose.material.icons.filled.Calculate
+import androidx.compose.material.icons.filled.CardGiftcard
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LaptopMac
+import androidx.compose.material.icons.filled.LocalCafe
+import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.MedicalServices
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.ShoppingBag
+import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Spa
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Storefront
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.TwoWheeler
+import androidx.compose.material.icons.filled.VolunteerActivism
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.Work
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -110,17 +125,32 @@ fun parseColorHex(hex: String, fallback: Color = EmeraldPrimary): Color {
 fun getCategoryVectorIcon(iconKey: String): ImageVector {
     return when (iconKey) {
         "work" -> Icons.Default.Work
+        "badge" -> Icons.Default.Badge
+        "payments" -> Icons.Default.Payments
+        "redeem" -> Icons.Default.CardGiftcard
+        "wallet" -> Icons.Default.AccountBalanceWallet
         "laptop" -> Icons.Default.LaptopMac
-        "store" -> Icons.Default.Storefront
+        "store", "storefront" -> Icons.Default.Storefront
         "trending_up" -> Icons.Default.TrendingUp
+        "stars" -> Icons.Default.Star
         "restaurant" -> Icons.Default.Restaurant
+        "bakery_dining" -> Icons.Default.BakeryDining
+        "local_cafe" -> Icons.Default.LocalCafe
+        "local_gas_station" -> Icons.Default.LocalGasStation
+        "two_wheeler" -> Icons.Default.TwoWheeler
+        "wifi" -> Icons.Default.Wifi
+        "shopping_cart" -> Icons.Default.ShoppingCart
         "directions_car" -> Icons.Default.DirectionsCar
         "home" -> Icons.Default.Home
         "bolt" -> Icons.Default.Bolt
         "shopping_bag" -> Icons.Default.ShoppingBag
+        "subscriptions" -> Icons.Default.Subscriptions
+        "spa" -> Icons.Default.Spa
+        "sports_esports" -> Icons.Default.SportsEsports
         "medical_services" -> Icons.Default.MedicalServices
         "school" -> Icons.Default.School
         "movie" -> Icons.Default.Movie
+        "volunteer_activism" -> Icons.Default.VolunteerActivism
         "account_balance" -> Icons.Default.AccountBalance
         "business_center" -> Icons.Default.BusinessCenter
         "devices" -> Icons.Default.Devices
