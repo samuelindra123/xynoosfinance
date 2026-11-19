@@ -4,8 +4,14 @@ set -euo pipefail
 TARGET="app/google-services.json"
 
 if [[ -n "${GOOGLE_SERVICES_JSON_BASE64:-}" ]]; then
-  printf '%s' "${GOOGLE_SERVICES_JSON_BASE64}" | tr -d '\r\n' | base64 --decode > "${TARGET}.tmp"
-  mv "${TARGET}.tmp" "${TARGET}"
+  # Accept a JSON value here as well so a misnamed secret does not fail with a
+  # confusing base64 error before the configuration can be validated below.
+  if [[ "${GOOGLE_SERVICES_JSON_BASE64}" =~ ^[[:space:]]*\{ ]]; then
+    printf '%s' "${GOOGLE_SERVICES_JSON_BASE64}" > "${TARGET}"
+  else
+    printf '%s' "${GOOGLE_SERVICES_JSON_BASE64}" | tr -d '[:space:]' | base64 --decode > "${TARGET}.tmp"
+    mv "${TARGET}.tmp" "${TARGET}"
+  fi
 elif [[ -n "${GOOGLE_SERVICES_JSON:-}" ]]; then
   printf '%s' "${GOOGLE_SERVICES_JSON}" > "${TARGET}"
 fi
