@@ -7,6 +7,11 @@ on:
         description: "Tag rilis (kosongkan untuk otomatis v2.0.<run_number>)"
         required: false
         default: ""
+      mandatory_update:
+        description: "Wajibkan semua pengguna update ke versi ini (Popup Wajib Update)"
+        type: boolean
+        required: false
+        default: false
       release_channel:
         description: "Jenis paket APK yang dibangun"
         type: choice
@@ -34,7 +39,7 @@ concurrency:
 
 jobs:
   build-and-release-apk:
-    name: Build & Release XynoosFinance v2.0 APK
+    name: Build & Release XynoosFinance APK
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,12 +121,13 @@ jobs:
             fi
           fi
 
-      - name: Determine Release Tag & Gradle Tasks
+      - name: Determine Release Tag, Version Code & Gradle Tasks
         id: meta
         shell: bash
         env:
           INPUT_TAG: ${{ inputs.release_tag }}
           INPUT_CHANNEL: ${{ inputs.release_channel }}
+          INPUT_MANDATORY: ${{ inputs.mandatory_update }}
         run: |
           CHANNEL="${INPUT_CHANNEL:-release-and-debug}"
 
@@ -133,6 +139,18 @@ jobs:
             TAG_NAME="v2.0.${GITHUB_RUN_NUMBER}"
           fi
 
+          VERSION_NAME="${TAG_NAME#v}"
+          VERSION_NAME="${VERSION_NAME#V}"
+          VERSION_CODE=$((2 + GITHUB_RUN_NUMBER))
+
+          if [ "$INPUT_MANDATORY" = "true" ]; then
+            IS_MANDATORY="true"
+            MIN_VERSION_CODE="$VERSION_CODE"
+          else
+            IS_MANDATORY="false"
+            MIN_VERSION_CODE="0"
+          fi
+
           if [ "$CHANNEL" = "release-only" ]; then
             GRADLE_TASKS="assembleRelease"
           elif [ "$CHANNEL" = "debug-only" ]; then
@@ -142,13 +160,21 @@ jobs:
           fi
 
           echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "version_name=${VERSION_NAME}" >> $GITHUB_OUTPUT
+          echo "version_code=${VERSION_CODE}" >> $GITHUB_OUTPUT
+          echo "min_version_code=${MIN_VERSION_CODE}" >> $GITHUB_OUTPUT
+          echo "is_mandatory=${IS_MANDATORY}" >> $GITHUB_OUTPUT
           echo "gradle_tasks=${GRADLE_TASKS}" >> $GITHUB_OUTPUT
           echo "channel=${CHANNEL}" >> $GITHUB_OUTPUT
 
       - name: Build APK (${{ steps.meta.outputs.channel }})
         shell: bash
         run: |
-          gradle ${{ steps.meta.outputs.gradle_tasks }} --no-daemon --stacktrace
+          gradle ${{ steps.meta.outputs.gradle_tasks }} \
+            -PxynoosVersionCode=${{ steps.meta.outputs.version_code }} \
+            -PxynoosVersionName="${{ steps.meta.outputs.version_name }}" \
+            -PxynoosGithubRepo="${{ github.repository }}" \
+            --no-daemon --stacktrace
           mkdir -p dist
           if [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
             cp app/build/outputs/apk/release/app-release.apk "dist/XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk"
@@ -178,19 +204,21 @@ jobs:
           body: |
             ## XynoosFinance Android Platform (${{ steps.meta.outputs.tag_name }})
             **Dikembangkan dan Dirilis oleh Xynoos Technology**
+            - **Versi:** `${{ steps.meta.outputs.version_name }}` (Build `${{ steps.meta.outputs.version_code }}`)
+            - **Wajib Update:** `${{ steps.meta.outputs.is_mandatory }}`
 
             ### Unduh File Instalasi Android (APK)
-            Silakan unduh file APK di bawah ini untuk menginstal dan menyebarluaskan aplikasi **XynoosFinance**:
-            - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk`** *(Direkomendasikan untuk distribusi publik & instalasi langsung)*
+            - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk`** *(Direkomendasikan untuk distribusi publik & update langsung)*
             - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Debug.apk`** *(Versi pengujian / debugging, jika disertakan)*
 
-            ### Pembaruan Terbaru Rilis Ini (v2.0):
-            - **Auto Backup Cloud Setiap 3 Menit (Low-RAM & Online-Aware)**: Sinkronisasi inkremental otomatis per akun Google (`users/{uid}`) saat terhubung ke internet tanpa membebani memori.
-            - **Input Transaksi Seamless Layar Penuh**: Form transaksi stabil mengikuti keyboard (`imePadding`) dengan tombol simpan selalu menempel di bawah.
-            - **Xynoos AI Lebih Cerdas + Multi-Sesi Persisten**: Riwayat konsultasi AI tersimpan lokal di SQLite dengan dukungan manajemen sesi, analisis bulanan/tahunan, dan parser transaksi alami.
-            - **Kategori Baru Lebih Kreatif**: Tambahan kategori seperti *Gaji Pekerjaan*, *Gaji PKL / Magang*, *Gaji Lain*, *Beli Makanan & Lauk*, *Beli Jajan & Camilan*, *Beli Bensin & BBM*, dan lainnya.
-            - **Notifikasi Nyata & Bermanfaat**: Pengingat harian terjadwal, peringatan anggaran otomatis (≥70%, ≥90%, ≥100%), dan notifikasi target tabungan tercapai.
-            - **Keamanan Kunci Pola 3×3 (Pattern Lock)**: Proteksi aplikasi dengan pola gestur interaktif ber-hash SHA-256.
+            ### Pembaruan Terbaru Rilis Ini:
+            - **Deteksi Update Otomatis & Trigger Wajib Update (GitHub Releases)**: Aplikasi terpasang otomatis mengecek rilis terbaru dari repositori ini dan memunculkan tombol Update Sekarang.
+            - **Auto Backup Cloud Setiap 3 Menit (Low-RAM & Online-Aware)**: Sinkronisasi inkremental per akun Google saat online tanpa menguras RAM.
+            - **Input Transaksi Seamless Layar Penuh**: Form tetap stabil mengikuti keyboard dengan tombol simpan menempel di bawah.
+            - **Xynoos AI Multi-Sesi Persisten & Kategori Baru Kreatif**: Riwayat sesi AI tersimpan di SQLite beserta kategori gaji PKL, bensin, jajan, makanan, dan lainnya.
+            - **Notifikasi Terjadwal & Keamanan Kunci Pola 3×3**: Pengingat harian, peringatan anggaran, serta proteksi pola SHA-256.
+
+            <!-- XYNOOS_META:versionCode=${{ steps.meta.outputs.version_code }};minVersionCode=${{ steps.meta.outputs.min_version_code }};mandatory=${{ steps.meta.outputs.is_mandatory }} -->
           files: dist/*.apk
           draft: false
           prerelease: false
@@ -203,15 +231,16 @@ jobs:
           {
             echo "## Build & Release XynoosFinance Selesai"
             echo ""
-            echo "- **Tag Rilis:** \`${{ steps.meta.outputs.tag_name }}\`"
-            echo "- **Mode Build:** \`${{ steps.meta.outputs.channel }}\`"
-            echo "- **Artifacts:** Tersedia di bagian **Artifacts** di halaman run ini (\`XynoosFinance-${{ steps.meta.outputs.tag_name }}-APK\`)."
+            echo "- **Tag Rilis:** \`${{ steps.meta.outputs.tag_name }}\` (Build \`${{ steps.meta.outputs.version_code }}\`)"
+            echo "- **Wajib Update:** \`${{ steps.meta.outputs.is_mandatory }}\`"
+            echo "- **Repo Target Update:** \`${{ github.repository }}\`"
+            echo "- **Artifacts:** Tersedia di bagian **Artifacts** (\`XynoosFinance-${{ steps.meta.outputs.tag_name }}-APK\`)."
             if [ "${{ steps.gh_release.outcome }}" = "success" ]; then
-              echo "- **GitHub Releases:** Berhasil diterbitkan ke menu **Releases** repository."
+              echo "- **GitHub Releases:** Berhasil diterbitkan ke menu **Releases**."
             elif [ "${{ steps.gh_release.outcome }}" = "skipped" ]; then
               echo "- **GitHub Releases:** Dilewati sesuai pilihan workflow."
             else
-              echo "- **GitHub Releases:** Publikasi tag/release ditahan oleh izin bawaan GitHub repository (*Read-only GITHUB_TOKEN*), **namun file APK tetap aman dan dapat diunduh langsung dari Artifacts di bawah**."
-              echo "  - Untuk mengaktifkan publikasi ke tab *Releases*: buka **Settings → Actions → General → Workflow permissions**, pilih **Read and write permissions**, lalu klik **Save**."
+              echo "- **GitHub Releases:** Dibatasi izin *Read-only GITHUB_TOKEN*, namun APK tetap tersedia di **Artifacts**."
+              echo "  - Aktifkan di **Settings → Actions → General → Workflow permissions → Read and write permissions**."
             fi
           } >> $GITHUB_STEP_SUMMARY
