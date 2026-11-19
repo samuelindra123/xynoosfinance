@@ -92,8 +92,6 @@ jobs:
             echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
             echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
           else
-            # Salin sertifikat dari debug.keystore (alias androiddebugkey -> upload)
-            # agar SHA-1 & SHA-256 pada Release APK sama dengan yang terdaftar di Firebase / Google Sign-In
             keytool -importkeystore \
               -srckeystore debug.keystore \
               -srcstorepass android \
@@ -209,14 +207,6 @@ jobs:
 
             ### Unduh File Instalasi Android (APK)
             - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Release.apk`** *(Direkomendasikan untuk distribusi publik & update langsung)*
-            - **`XynoosFinance-${{ steps.meta.outputs.tag_name }}-Debug.apk`** *(Versi pengujian / debugging, jika disertakan)*
-
-            ### Pembaruan Terbaru Rilis Ini:
-            - **Deteksi Update Otomatis & Trigger Wajib Update (GitHub Releases)**: Aplikasi terpasang otomatis mengecek rilis terbaru dari repositori ini dan memunculkan tombol Update Sekarang.
-            - **Auto Backup Cloud Setiap 3 Menit (Low-RAM & Online-Aware)**: Sinkronisasi inkremental per akun Google saat online tanpa menguras RAM.
-            - **Input Transaksi Seamless Layar Penuh**: Form tetap stabil mengikuti keyboard dengan tombol simpan menempel di bawah.
-            - **Xynoos AI Multi-Sesi Persisten & Kategori Baru Kreatif**: Riwayat sesi AI tersimpan di SQLite beserta kategori gaji PKL, bensin, jajan, makanan, dan lainnya.
-            - **Notifikasi Terjadwal & Keamanan Kunci Pola 3×3**: Pengingat harian, peringatan anggaran, serta proteksi pola SHA-256.
 
             <!-- XYNOOS_META:versionCode=${{ steps.meta.outputs.version_code }};minVersionCode=${{ steps.meta.outputs.min_version_code }};mandatory=${{ steps.meta.outputs.is_mandatory }} -->
           files: dist/*.apk
@@ -230,17 +220,6 @@ jobs:
         run: |
           {
             echo "## Build & Release XynoosFinance Selesai"
-            echo ""
             echo "- **Tag Rilis:** \`${{ steps.meta.outputs.tag_name }}\` (Build \`${{ steps.meta.outputs.version_code }}\`)"
             echo "- **Wajib Update:** \`${{ steps.meta.outputs.is_mandatory }}\`"
-            echo "- **Repo Target Update:** \`${{ github.repository }}\`"
-            echo "- **Artifacts:** Tersedia di bagian **Artifacts** (\`XynoosFinance-${{ steps.meta.outputs.tag_name }}-APK\`)."
-            if [ "${{ steps.gh_release.outcome }}" = "success" ]; then
-              echo "- **GitHub Releases:** Berhasil diterbitkan ke menu **Releases**."
-            elif [ "${{ steps.gh_release.outcome }}" = "skipped" ]; then
-              echo "- **GitHub Releases:** Dilewati sesuai pilihan workflow."
-            else
-              echo "- **GitHub Releases:** Dibatasi izin *Read-only GITHUB_TOKEN*, namun APK tetap tersedia di **Artifacts**."
-              echo "  - Aktifkan di **Settings → Actions → General → Workflow permissions → Read and write permissions**."
-            fi
           } >> $GITHUB_STEP_SUMMARY
