@@ -93,12 +93,20 @@ Platform **XynoosFinance** oleh **Xynoos Technology** menyediakan dua cara mudah
    - Klik **Publish release**. Sekarang tautan rilis APK siap disebarluaskan ke siapa saja!
 
 ### Cara 2: Jalankan Manual via GitHub Actions (`Run workflow`)
-- File workflow rilis **v2.0.0** terbaru ditempatkan di **`scripts/release-apk.yml`** agar proses **Push to GitHub** dari editor tidak tertolak oleh pembatasan izin `workflows` pada GitHub App.
+- Workflow rilis **v2.0.0** otomatis mengambil konfigurasi Firebase dari GitHub Actions Secrets.
+- Tambahkan satu dari secret berikut di GitHub: **Settings → Secrets and variables → Actions**:
+  - `GOOGLE_SERVICES_JSON_BASE64`: isi base64 dari file `app/google-services.json` yang diunduh dari Firebase Console.
+  - atau `GOOGLE_SERVICES_JSON`: isi JSON lengkap dari file `app/google-services.json`.
+- Pastikan file Firebase mengaktifkan **Google Sign-In** dan memiliki Android package:
+  `com.aistudio.xynoosfinance.xfnmkz`.
+- Secret bisa dibuat dengan:
+  ```bash
+  base64 -w0 app/google-services.json
+  ```
 - Cara mengaktifkan dan menjalankan rilis APK versi terbaru di GitHub:
   1. Lakukan **Push to GitHub** seperti biasa.
-  2. Buka file **`scripts/release-apk.yml`** langsung di web GitHub Anda → klik ikon pensil (**Edit this file**) → ubah jalur namanya menjadi **`.github/workflows/release-apk.yml`** → klik **Commit changes**. *(Langkah ini hanya perlu dilakukan sekali).*
-  3. Buka tab **Actions** → pilih workflow **Release XynoosFinance APK (Manual & Tag)** → klik **Run workflow** (biarkan tag kosong untuk otomatis `v2.0.<run_number>`, atau isi tag custom) → klik **Run workflow**.
-  4. Setelah selesai, unduh **`XynoosFinance-v2.0.x-Release.apk`** dari menu **Releases** atau bagian **Artifacts**.
+  2. Buka tab **Actions** → pilih workflow **Release XynoosFinance APK (Manual & Tag)** → klik **Run workflow** (biarkan tag kosong untuk otomatis `v2.0.<run_number>`, atau isi tag custom) → klik **Run workflow**.
+  3. Setelah selesai, unduh **`XynoosFinance-v2.0.x-Release.apk`** dari menu **Releases** atau bagian **Artifacts**.
 
 ---
 
