@@ -34,33 +34,35 @@ object ReminderNotificationHelper {
 
     fun ensureChannelCreated(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            runCatching {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
 
-            val reminderChannel = NotificationChannel(
-                CHANNEL_ID,
-                "Pengingat Harian XynoosFinance",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Pengingat harian pencatatan pemasukan, pengeluaran, dan cek kas."
+                val reminderChannel = NotificationChannel(
+                    CHANNEL_ID,
+                    "Pengingat Harian XynoosFinance",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Pengingat harian pencatatan pemasukan, pengeluaran, dan cek kas."
+                }
+
+                val budgetChannel = NotificationChannel(
+                    CHANNEL_BUDGET_ALERTS,
+                    "Peringatan Anggaran & Batas Pengeluaran",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Peringatan real-time saat anggaran kategori mencapai 70%, 90%, atau melebihi 100%."
+                }
+
+                val activityChannel = NotificationChannel(
+                    CHANNEL_ACTIVITY_ALERTS,
+                    "Aktivitas Transaksi & Target Tabungan",
+                    NotificationManager.IMPORTANCE_DEFAULT
+                ).apply {
+                    description = "Konfirmasi pencatatan transaksi penting dan notifikasi saat target tabungan tercapai."
+                }
+
+                manager.createNotificationChannels(listOf(reminderChannel, budgetChannel, activityChannel))
             }
-
-            val budgetChannel = NotificationChannel(
-                CHANNEL_BUDGET_ALERTS,
-                "Peringatan Anggaran & Batas Pengeluaran",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Peringatan real-time saat anggaran kategori mencapai 70%, 90%, atau melebihi 100%."
-            }
-
-            val activityChannel = NotificationChannel(
-                CHANNEL_ACTIVITY_ALERTS,
-                "Aktivitas Transaksi & Target Tabungan",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Konfirmasi pencatatan transaksi penting dan notifikasi saat target tabungan tercapai."
-            }
-
-            manager.createNotificationChannels(listOf(reminderChannel, budgetChannel, activityChannel))
         }
     }
 
@@ -97,37 +99,39 @@ object ReminderNotificationHelper {
         hour: Int,
         minute: Int
     ) {
-        ensureChannelCreated(context)
-        val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
-        val intent = Intent(context, DailyReminderReceiver::class.java)
-        val pendingIntent = PendingIntent.getBroadcast(
-            context,
-            DAILY_ALARM_REQUEST_CODE,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        runCatching {
+            ensureChannelCreated(context)
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
+            val intent = Intent(context, DailyReminderReceiver::class.java)
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                DAILY_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
 
-        if (!enabled) {
-            alarmManager.cancel(pendingIntent)
-            return
-        }
-
-        val cal = Calendar.getInstance().apply {
-            set(Calendar.HOUR_OF_DAY, hour.coerceIn(0, 23))
-            set(Calendar.MINUTE, minute.coerceIn(0, 59))
-            set(Calendar.SECOND, 0)
-            set(Calendar.MILLISECOND, 0)
-            if (timeInMillis <= System.currentTimeMillis()) {
-                add(Calendar.DAY_OF_YEAR, 1)
+            if (!enabled) {
+                alarmManager.cancel(pendingIntent)
+                return
             }
-        }
 
-        alarmManager.setInexactRepeating(
-            AlarmManager.RTC_WAKEUP,
-            cal.timeInMillis,
-            AlarmManager.INTERVAL_DAY,
-            pendingIntent
-        )
+            val cal = Calendar.getInstance().apply {
+                set(Calendar.HOUR_OF_DAY, hour.coerceIn(0, 23))
+                set(Calendar.MINUTE, minute.coerceIn(0, 59))
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+                if (timeInMillis <= System.currentTimeMillis()) {
+                    add(Calendar.DAY_OF_YEAR, 1)
+                }
+            }
+
+            alarmManager.setInexactRepeating(
+                AlarmManager.RTC_WAKEUP,
+                cal.timeInMillis,
+                AlarmManager.INTERVAL_DAY,
+                pendingIntent
+            )
+        }
     }
 
     fun sendDailyScheduledReminder(
@@ -274,20 +278,22 @@ object ReminderNotificationHelper {
         body: String,
         priority: Int
     ): Boolean {
-        val notification = NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle(title)
-            .setContentText(body)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
-            .setPriority(priority)
-            .setContentIntent(buildOpenAppPendingIntent(context))
-            .setAutoCancel(true)
-            .build()
-
         return try {
+            val notification = NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.drawable.ic_stat_xynoos)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(priority)
+                .setContentIntent(buildOpenAppPendingIntent(context))
+                .setAutoCancel(true)
+                .build()
+
             NotificationManagerCompat.from(context).notify(notificationId, notification)
             true
         } catch (_: SecurityException) {
+            false
+        } catch (_: Exception) {
             false
         }
     }

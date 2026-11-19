@@ -17,6 +17,7 @@ import com.example.domain.RecurringTransactionModel
 import com.example.domain.SyncStatus
 import com.example.domain.TransactionCategoryModel
 import com.example.domain.TransactionModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.util.UUID
@@ -30,6 +31,15 @@ class OfflineFirstFinanceRepository(
     private val cloudRepo: FirestoreFinanceRepository?,
     private val userId: String
 ) {
+    private suspend inline fun <T> safeCloudCall(block: () -> Result<T>): Result<T>? {
+        return try {
+            block()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Result.failure(t)
+        }
+    }
     fun observeAccounts(): Flow<List<FinancialAccountModel>> =
         dao.observeAccounts(userId).map { list -> list.map { it.toDomain() } }
 
@@ -203,7 +213,7 @@ class OfflineFirstFinanceRepository(
         recalculateAndPersistAccountBalances()
 
         val refreshed = dao.getAccountById(account.id, userId)?.toDomain() ?: pending
-        val syncResult = cloudRepo?.syncAccount(refreshed)
+        val syncResult = cloudRepo?.let { safeCloudCall { it.syncAccount(refreshed) } }
         val finalAccount = refreshed.copy(
             syncStatus = if (syncResult?.isSuccess == true) SyncStatus.SYNCED else SyncStatus.LOCAL_ONLY
         )
@@ -221,7 +231,7 @@ class OfflineFirstFinanceRepository(
         dao.upsertTransaction(pending.toEntity())
         recalculateAndPersistAccountBalances()
 
-        val syncResult = cloudRepo?.syncTransaction(pending)
+        val syncResult = cloudRepo?.let { safeCloudCall { it.syncTransaction(pending) } }
         val finalTx = pending.copy(
             syncStatus = if (syncResult?.isSuccess == true) SyncStatus.SYNCED else SyncStatus.LOCAL_ONLY
         )
@@ -235,8 +245,8 @@ class OfflineFirstFinanceRepository(
         recalculateAndPersistAccountBalances()
         val deletedEntity = dao.getTransactionById(transactionId, userId)?.toDomain()
         if (deletedEntity != null && cloudRepo != null) {
-            val res = cloudRepo.syncTransaction(deletedEntity)
-            if (res.isSuccess) {
+            val res = safeCloudCall { cloudRepo.syncTransaction(deletedEntity) }
+            if (res?.isSuccess == true) {
                 dao.upsertTransaction(deletedEntity.copy(syncStatus = SyncStatus.SYNCED).toEntity())
             }
         }
@@ -245,7 +255,7 @@ class OfflineFirstFinanceRepository(
     suspend fun saveCategory(category: TransactionCategoryModel) {
         val normalized = category.copy(userId = userId)
         dao.upsertCategory(normalized.toEntity())
-        cloudRepo?.syncCategory(normalized)
+        cloudRepo?.let { safeCloudCall { it.syncCategory(normalized) } }
     }
 
     suspend fun saveBudget(budget: BudgetModel) {
@@ -255,7 +265,7 @@ class OfflineFirstFinanceRepository(
             updatedAtMillis = System.currentTimeMillis()
         )
         dao.upsertBudget(pending.toEntity())
-        val res = cloudRepo?.syncBudget(pending)
+        val res = cloudRepo?.let { safeCloudCall { it.syncBudget(pending) } }
         if (res?.isSuccess == true) {
             dao.upsertBudget(pending.copy(syncStatus = SyncStatus.SYNCED).toEntity())
         }
@@ -273,7 +283,7 @@ class OfflineFirstFinanceRepository(
             updatedAtMillis = System.currentTimeMillis()
         )
         dao.upsertGoal(pending.toEntity())
-        val res = cloudRepo?.syncGoal(pending)
+        val res = cloudRepo?.let { safeCloudCall { it.syncGoal(pending) } }
         if (res?.isSuccess == true) {
             dao.upsertGoal(pending.copy(syncStatus = SyncStatus.SYNCED).toEntity())
         }
@@ -300,7 +310,7 @@ class OfflineFirstFinanceRepository(
             SyncStatus.PENDING_UPLOAD.name
         ) ?: return null
         val updatedGoal = updatedGoalEntity.toDomain()
-        val res = cloudRepo?.syncGoal(updatedGoal)
+        val res = cloudRepo?.let { safeCloudCall { it.syncGoal(updatedGoal) } }
         if (res?.isSuccess == true) {
             val synced = updatedGoal.copy(syncStatus = SyncStatus.SYNCED)
             dao.upsertGoal(synced.toEntity())
@@ -328,7 +338,7 @@ class OfflineFirstFinanceRepository(
             updatedAtMillis = System.currentTimeMillis()
         )
         dao.upsertInvoice(pending.toEntity())
-        val res = cloudRepo?.syncInvoice(pending)
+        val res = cloudRepo?.let { safeCloudCall { it.syncInvoice(pending) } }
         if (res?.isSuccess == true) {
             dao.upsertInvoice(pending.copy(syncStatus = SyncStatus.SYNCED).toEntity())
         }
@@ -398,8 +408,10 @@ class OfflineFirstFinanceRepository(
             }
 
             Result.success(pushedCount)
-        } catch (e: Exception) {
-            Result.failure(e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 
@@ -481,13 +493,15 @@ class OfflineFirstFinanceRepository(
 
             recalculateAndPersistAccountBalances()
             Result.success(syncedCount)
-        } catch (e: Exception) {
-            Result.failure(e)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Result.failure(t)
         }
     }
 
     suspend fun deleteAllUserDataLocallyAndCloud() {
-        cloudRepo?.deleteCloudUserData()
+        cloudRepo?.let { safeCloudCall { it.deleteCloudUserData() } }
         dao.deleteAllUserData(userId)
     }
 }

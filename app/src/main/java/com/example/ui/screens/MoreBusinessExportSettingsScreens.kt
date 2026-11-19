@@ -44,6 +44,7 @@ import androidx.compose.material.icons.filled.Pattern
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,6 +75,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.BuildConfig
 import com.example.domain.AccountType
 import com.example.domain.AppThemeMode
 import com.example.domain.IdrFormatter
@@ -135,6 +137,8 @@ fun MoreSectionScreen(
     onUpdateReminders: (Boolean, Int, Int, Boolean, Boolean, Boolean) -> Unit,
     onUpdateAutoBackupEnabled: (Boolean) -> Unit = {},
     onUpdatePatternLock: (Boolean, String, Boolean) -> Unit = { _, _, _ -> },
+    onCheckAppUpdate: () -> Unit = {},
+    onUpdateGitHubRepo: (String) -> Unit = {},
     onSyncCloudNow: () -> Unit,
     onSignOut: () -> Unit,
     onDeleteAccountAndData: () -> Unit,
@@ -231,6 +235,8 @@ fun MoreSectionScreen(
                 onUpdateReminders = onUpdateReminders,
                 onUpdateAutoBackupEnabled = onUpdateAutoBackupEnabled,
                 onUpdatePatternLock = onUpdatePatternLock,
+                onCheckAppUpdate = onCheckAppUpdate,
+                onUpdateGitHubRepo = onUpdateGitHubRepo,
                 onUpdateWhatsAppSettings = onUpdateWhatsAppSettings,
                 onSendWhatsAppNow = onSendWhatsAppNow,
                 onSyncCloudNow = onSyncCloudNow,
@@ -1149,6 +1155,8 @@ private fun SettingsAndPrivacySubScreen(
     onUpdateReminders: (Boolean, Int, Int, Boolean, Boolean, Boolean) -> Unit,
     onUpdateAutoBackupEnabled: (Boolean) -> Unit,
     onUpdatePatternLock: (Boolean, String, Boolean) -> Unit,
+    onCheckAppUpdate: () -> Unit,
+    onUpdateGitHubRepo: (String) -> Unit,
     onUpdateWhatsAppSettings: (String, Boolean) -> Unit,
     onSendWhatsAppNow: (String?) -> Unit,
     onSyncCloudNow: () -> Unit,
@@ -1158,6 +1166,9 @@ private fun SettingsAndPrivacySubScreen(
     val context = LocalContext.current
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var showSetupPatternDialog by remember { mutableStateOf(false) }
+    var repoSlugInput by rememberSaveable(uiState.effectiveGithubRepoSlug) {
+        mutableStateOf(uiState.effectiveGithubRepoSlug)
+    }
     var waPhoneInput by rememberSaveable(uiState.prefs.whatsAppPhone) { mutableStateOf(uiState.prefs.whatsAppPhone) }
     var waAutoNotify by rememberSaveable(uiState.prefs.whatsAppAutoNotifyOnTransaction) {
         mutableStateOf(uiState.prefs.whatsAppAutoNotifyOnTransaction)
@@ -1345,6 +1356,64 @@ private fun SettingsAndPrivacySubScreen(
                             Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(if (uiState.isSyncing) "Menyinkronkan..." else "Backup & Sinkronkan Cloud Sekarang")
+                        }
+                    }
+                }
+            }
+
+            // 0C. NEW: Automatic GitHub Releases App Update & Mandatory Update Trigger
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().testTag("app_update_settings_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.SystemUpdate, contentDescription = null, tint = EmeraldPrimary)
+                            Text(
+                                text = "Pembaruan Aplikasi (GitHub Releases)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = EmeraldPrimary
+                            )
+                        }
+                        Text(
+                            text = "Versi Terpasang: v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})\n" +
+                                "Status: ${uiState.updateStatusText.ifBlank { "Siap memeriksa rilis terbaru GitHub" }}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = repoSlugInput,
+                            onValueChange = { repoSlugInput = it },
+                            label = { Text("Repositori GitHub (owner/nama-repo)") },
+                            placeholder = { Text("contoh: xynoosdeveloper/XynoosFinance") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth().testTag("github_repo_input")
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { onUpdateGitHubRepo(repoSlugInput) },
+                                modifier = Modifier.weight(1f).testTag("save_github_repo_button")
+                            ) {
+                                Text("Simpan Repo")
+                            }
+                            Button(
+                                onClick = {
+                                    if (repoSlugInput.trim() != uiState.effectiveGithubRepoSlug) {
+                                        onUpdateGitHubRepo(repoSlugInput)
+                                    } else {
+                                        onCheckAppUpdate()
+                                    }
+                                },
+                                enabled = !uiState.isCheckingUpdate,
+                                modifier = Modifier.weight(1f).testTag("check_app_update_button")
+                            ) {
+                                Text(if (uiState.isCheckingUpdate) "Memeriksa..." else "Cek Update")
+                            }
                         }
                     }
                 }
@@ -1829,7 +1898,9 @@ fun UsdLiveMarketSubScreen(
                 )
             }
 
-            items(usd.candles.takeLast(8).reversed(), key = { it.timestampMillis }) { tick ->
+            val recentCandles = usd.candles.takeLast(8).reversed()
+            items(recentCandles.indices.toList(), key = { idx -> "${recentCandles[idx].timestampMillis}_$idx" }) { idx ->
+                val tick = recentCandles[idx]
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

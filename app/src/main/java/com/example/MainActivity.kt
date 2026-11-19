@@ -67,7 +67,10 @@ import com.example.domain.TransactionModel
 import com.example.domain.TransactionType
 import com.example.notifications.ReminderNotificationHelper
 import androidx.compose.material.icons.automirrored.filled.ShowChart
+import com.example.BuildConfig
+import com.example.data.remote.GitHubUpdateChecker
 import com.example.export.StatusImageExporter
+import com.example.ui.components.AppUpdatePromptDialog
 import com.example.ui.components.PatternLockGateScreen
 import com.example.ui.screens.AiAssistantScreen
 import com.example.ui.screens.GoalsAndBudgetsScreen
@@ -87,6 +90,7 @@ import com.example.ui.viewmodel.XynoosViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -109,7 +113,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         configureAppCheck(applicationContext, intent)
-        ReminderNotificationHelper.ensureChannelCreated(applicationContext)
+        runCatching { ReminderNotificationHelper.ensureChannelCreated(applicationContext) }
         enableEdgeToEdge()
 
         setContent {
@@ -213,8 +217,10 @@ fun XynoosRootApplication(
         }
     }
 
+    val safeUiExceptionHandler = remember { CoroutineExceptionHandler { _, _ -> } }
+
     val performSignOut: () -> Unit = {
-        CoroutineScope(Dispatchers.Main).launch {
+        CoroutineScope(Dispatchers.Main + safeUiExceptionHandler).launch {
             runCatching {
                 CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
             }
@@ -229,8 +235,14 @@ fun XynoosRootApplication(
             storedPatternHash = prefsState.patternLockHash,
             onUnlocked = { isPatternUnlocked = true },
             onForgotPatternSignOut = {
-                CoroutineScope(Dispatchers.Main).launch {
-                    prefsRepo.updatePatternLock(enabled = false, patternHash = "", lockOnResume = prefsState.patternLockOnResume)
+                CoroutineScope(Dispatchers.Main + safeUiExceptionHandler).launch {
+                    runCatching {
+                        prefsRepo.updatePatternLock(
+                            enabled = false,
+                            patternHash = "",
+                            lockOnResume = prefsState.patternLockOnResume
+                        )
+                    }
                     performSignOut()
                 }
             }
@@ -570,6 +582,8 @@ fun XynoosAuthenticatedWorkspace(
                                     onUpdatePatternLock = { enabled, hash, lockResume ->
                                         viewModel.updatePatternLockSettings(enabled, hash, lockResume)
                                     },
+                                    onCheckAppUpdate = { viewModel.checkForAppUpdate(manual = true) },
+                                    onUpdateGitHubRepo = { viewModel.updateGitHubRepoSlug(it) },
                                     onSyncCloudNow = { viewModel.synchronizeNow(silent = false) },
                                     onSignOut = onSignOut,
                                     onDeleteAccountAndData = {
@@ -645,6 +659,27 @@ fun XynoosAuthenticatedWorkspace(
             onDelete = { txId ->
                 inspectingTransaction = null
                 viewModel.deleteTransaction(txId)
+            }
+        )
+    }
+
+    val pendingUpdate = uiState.availableUpdate
+    if (pendingUpdate != null) {
+        AppUpdatePromptDialog(
+            updateInfo = pendingUpdate,
+            currentVersionLabel = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
+            isChecking = uiState.isCheckingUpdate,
+            onUpdateNow = {
+                GitHubUpdateChecker.openUpdateDownload(context, pendingUpdate)
+            },
+            onRecheck = {
+                viewModel.checkForAppUpdate(manual = true)
+            },
+            onRemindLater = {
+                viewModel.dismissOptionalUpdate(skipVersion = false)
+            },
+            onSkipVersion = {
+                viewModel.dismissOptionalUpdate(skipVersion = true)
             }
         )
     }

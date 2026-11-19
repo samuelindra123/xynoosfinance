@@ -149,7 +149,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun syncAccount(account: FinancialAccountModel): Result<String> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val docRef = db.collection("users").document(uid).collection("accounts").document(account.id)
         return try {
             val existing = docRef.get().await()
@@ -189,7 +193,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun syncTransaction(tx: TransactionModel): Result<String> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val docRef = db.collection("users").document(uid).collection("transactions").document(tx.id)
         return try {
             val existing = docRef.get().await()
@@ -258,7 +266,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchTransactions(): Result<List<TransactionModel>> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val path = "users/$uid/transactions"
         return try {
             val snapshot = db.collection("users")
@@ -303,7 +315,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchAccounts(): List<FinancialAccountModel> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return emptyList()
+        }
         val path = "users/$uid/accounts"
         return try {
             val snap = db.collection("users").document(uid).collection("accounts")
@@ -407,7 +423,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun syncBudget(budget: BudgetModel): Result<String> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val docRef = db.collection("users").document(uid).collection("budgets").document(budget.id)
         return try {
             val existing = docRef.get().await()
@@ -477,7 +497,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun syncGoal(goal: FinancialGoalModel): Result<String> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val docRef = db.collection("users").document(uid).collection("goals").document(goal.id)
         return try {
             val existing = docRef.get().await()
@@ -553,7 +577,11 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun syncInvoice(invoice: InvoiceReferenceModel): Result<String> {
-        val uid = requireUserId()
+        val uid = try {
+            requireUserId()
+        } catch (e: Exception) {
+            return Result.failure(e)
+        }
         val docRef = db.collection("users").document(uid).collection("invoices").document(invoice.id)
         return try {
             val existing = docRef.get().await()

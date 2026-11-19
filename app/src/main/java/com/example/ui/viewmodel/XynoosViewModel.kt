@@ -3,9 +3,13 @@ package com.example.ui.viewmodel
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.ai.GroundedAiAssistant
 import com.example.data.local.UserPreferencesRepository
 import com.example.data.local.UserPreferencesState
+import com.example.data.remote.AppUpdateInfo
+import com.example.data.remote.GitHubUpdateCheckResult
+import com.example.data.remote.GitHubUpdateChecker
 import com.example.data.remote.LiveUsdMarketState
 import com.example.data.remote.LiveUsdRateRepository
 import com.example.data.repository.FirestoreFinanceRepository
@@ -49,12 +53,15 @@ import com.example.notifications.ReminderNotificationHelper
 import com.example.notifications.WhatsAppNotifierHelper
 import com.example.sync.AutoBackupStatusState
 import com.example.sync.CloudAutoBackupManager
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
@@ -150,7 +157,11 @@ data class XynoosUiState(
     val autoBackupStatus: AutoBackupStatusState = AutoBackupStatusState(),
     val lastGeneratedPdf: GeneratedPdfInfo? = null,
     val lastGeneratedStatusImage: GeneratedStatusImageInfo? = null,
-    val statusBannerMessage: String? = null
+    val statusBannerMessage: String? = null,
+    val availableUpdate: AppUpdateInfo? = null,
+    val isCheckingUpdate: Boolean = false,
+    val updateStatusText: String = "",
+    val effectiveGithubRepoSlug: String = ""
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -166,6 +177,7 @@ class XynoosViewModel(
     private val applicationContext: Context? = appContext?.applicationContext
     private val aiAssistant = GroundedAiAssistant()
     private val usdRateRepository = LiveUsdRateRepository()
+    private val safeCoroutineHandler = CoroutineExceptionHandler { _, _ -> }
 
     private val defaultAiWelcomeMessage =
         "Halo! Saya **Xynoos AI Finance Advisor**. Riwayat chat per sesi kini tersimpan otomatis agar tidak hilang.\n\n" +
@@ -217,6 +229,9 @@ class XynoosViewModel(
     private val _autoBackupEnabledSnapshot = MutableStateFlow(true)
     private var autoBackupManager: CloudAutoBackupManager? = null
     private val _fallbackAutoBackupStatus = MutableStateFlow(AutoBackupStatusState())
+    private val _availableUpdate = MutableStateFlow<AppUpdateInfo?>(null)
+    private val _isCheckingUpdate = MutableStateFlow(false)
+    private val _updateStatusText = MutableStateFlow("Belum diperiksa")
 
     private data class CoreDataBundle(
         val prefs: UserPreferencesState,
@@ -324,7 +339,10 @@ class XynoosViewModel(
         val lastPdf: GeneratedPdfInfo?,
         val lastStatusImg: GeneratedStatusImageInfo?,
         val usdMarket: LiveUsdMarketState,
-        val bannerMsg: String?
+        val bannerMsg: String?,
+        val availableUpdate: AppUpdateInfo?,
+        val isCheckingUpdate: Boolean,
+        val updateStatusText: String
     )
 
     private val aiAuxFlow = combine(
@@ -346,7 +364,10 @@ class XynoosViewModel(
             lastPdf = null,
             lastStatusImg = null,
             usdMarket = LiveUsdMarketState(),
-            bannerMsg = null
+            bannerMsg = null,
+            availableUpdate = null,
+            isCheckingUpdate = false,
+            updateStatusText = ""
         )
     }
 
@@ -356,6 +377,14 @@ class XynoosViewModel(
         _fallbackAutoBackupStatus
     ) { syncing, syncMsg, backupStat ->
         Triple(syncing, syncMsg, backupStat)
+    }
+
+    private val updateAuxFlow = combine(
+        _availableUpdate,
+        _isCheckingUpdate,
+        _updateStatusText
+    ) { updateInfo, checking, statusText ->
+        Triple(updateInfo, checking, statusText)
     }
 
     private val auxFlow = combine(
@@ -368,8 +397,9 @@ class XynoosViewModel(
             _statusBannerMessage
         ) { pdf, img, usd, banner ->
             Quadruple(pdf, img, usd, banner)
-        }
-    ) { aiBase, syncTriple, extra ->
+        },
+        updateAuxFlow
+    ) { aiBase, syncTriple, extra, updateTriple ->
         aiBase.copy(
             isSyncing = syncTriple.first,
             lastSyncMsg = syncTriple.second,
@@ -377,7 +407,10 @@ class XynoosViewModel(
             lastPdf = extra.first,
             lastStatusImg = extra.second,
             usdMarket = extra.third,
-            bannerMsg = extra.fourth
+            bannerMsg = extra.fourth,
+            availableUpdate = updateTriple.first,
+            isCheckingUpdate = updateTriple.second,
+            updateStatusText = updateTriple.third
         )
     }
 
@@ -486,7 +519,14 @@ class XynoosViewModel(
             autoBackupStatus = aux.autoBackupStatus,
             lastGeneratedPdf = aux.lastPdf,
             lastGeneratedStatusImage = aux.lastStatusImg,
-            statusBannerMessage = aux.bannerMsg
+            statusBannerMessage = aux.bannerMsg,
+            availableUpdate = aux.availableUpdate,
+            isCheckingUpdate = aux.isCheckingUpdate,
+            updateStatusText = aux.updateStatusText,
+            effectiveGithubRepoSlug = GitHubUpdateChecker.resolveEffectiveRepoSlug(
+                userConfiguredSlug = core.prefs.githubUpdateRepo,
+                buildConfigSlug = BuildConfig.GITHUB_REPO
+            )
         )
     }.stateIn(
         scope = viewModelScope,
@@ -495,25 +535,38 @@ class XynoosViewModel(
     )
 
     init {
-        viewModelScope.launch {
-            repository.ensureDefaultCategoriesSeeded()
-            val defaultSessionId = repository.ensureDefaultAiSession(defaultAiWelcomeMessage)
-            if (_activeAiSessionId.value.isBlank()) {
-                _activeAiSessionId.value = defaultSessionId
-            }
-            synchronizeNow(silent = true)
-        }
-        viewModelScope.launch {
-            prefsRepo.preferencesFlow.collect { prefs ->
-                _autoBackupEnabledSnapshot.value = prefs.autoBackupEvery3MinEnabled
-                applicationContext?.let { ctx ->
-                    ReminderNotificationHelper.scheduleDailyReminder(
-                        context = ctx,
-                        enabled = prefs.remindersEnabled,
-                        hour = prefs.reminderHour,
-                        minute = prefs.reminderMinute
-                    )
+        viewModelScope.launch(safeCoroutineHandler) {
+            try {
+                repository.ensureDefaultCategoriesSeeded()
+                val defaultSessionId = repository.ensureDefaultAiSession(defaultAiWelcomeMessage)
+                if (_activeAiSessionId.value.isBlank()) {
+                    _activeAiSessionId.value = defaultSessionId
                 }
+                synchronizeNow(silent = true)
+                checkForAppUpdate(manual = false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
+        }
+        viewModelScope.launch(safeCoroutineHandler) {
+            try {
+                prefsRepo.preferencesFlow.collect { prefs ->
+                    _autoBackupEnabledSnapshot.value = prefs.autoBackupEvery3MinEnabled
+                    applicationContext?.let { ctx ->
+                        runCatching {
+                            ReminderNotificationHelper.scheduleDailyReminder(
+                                context = ctx,
+                                enabled = prefs.remindersEnabled,
+                                hour = prefs.reminderHour,
+                                minute = prefs.reminderMinute
+                            )
+                        }
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
             }
         }
         applicationContext?.let { ctx ->
@@ -529,10 +582,15 @@ class XynoosViewModel(
                 }
             )
             autoBackupManager = manager
-            manager.start()
-            viewModelScope.launch {
-                manager.statusState.collect { st ->
-                    _fallbackAutoBackupStatus.value = st
+            runCatching { manager.start() }
+            viewModelScope.launch(safeCoroutineHandler) {
+                try {
+                    manager.statusState.collect { st ->
+                        _fallbackAutoBackupStatus.value = st
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Throwable) {
                 }
             }
         }
@@ -540,22 +598,32 @@ class XynoosViewModel(
     }
 
     override fun onCleared() {
-        autoBackupManager?.stop()
+        runCatching { autoBackupManager?.stop() }
         super.onCleared()
     }
 
     private fun startLiveUsdMinuteTicker() {
-        viewModelScope.launch {
+        viewModelScope.launch(safeCoroutineHandler) {
             // Initial fetch
-            val initial = usdRateRepository.fetchLatestUsdMarketState(_usdMarketState.value)
-            _usdMarketState.value = initial
+            try {
+                val initial = usdRateRepository.fetchLatestUsdMarketState(_usdMarketState.value)
+                _usdMarketState.value = initial
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+            }
             var secondsLeft = 60
             while (isActive) {
                 delay(1_000L)
                 secondsLeft -= 1
                 if (secondsLeft <= 0) {
-                    val refreshed = usdRateRepository.fetchLatestUsdMarketState(_usdMarketState.value)
-                    _usdMarketState.value = refreshed
+                    try {
+                        val refreshed = usdRateRepository.fetchLatestUsdMarketState(_usdMarketState.value)
+                        _usdMarketState.value = refreshed
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Throwable) {
+                    }
                     secondsLeft = 60
                 } else {
                     _usdMarketState.value = _usdMarketState.value.copy(
@@ -1390,6 +1458,97 @@ class XynoosViewModel(
         viewModelScope.launch {
             repository.deleteAllUserDataLocallyAndCloud()
             onComplete()
+        }
+    }
+
+    fun updateGitHubRepoSlug(repoSlug: String) {
+        viewModelScope.launch {
+            prefsRepo.updateGitHubRepoSlug(repoSlug)
+            val cleaned = GitHubUpdateChecker.sanitizeRepoSlug(repoSlug)
+            _statusBannerMessage.value = if (cleaned.contains('/')) {
+                "Repositori update GitHub disimpan: $cleaned"
+            } else {
+                "Repositori update GitHub dikosongkan."
+            }
+            if (cleaned.contains('/')) {
+                checkForAppUpdate(manual = true)
+            }
+        }
+    }
+
+    fun dismissOptionalUpdate(skipVersion: Boolean) {
+        val current = _availableUpdate.value ?: return
+        if (current.isMandatory) return
+        viewModelScope.launch {
+            if (skipVersion) {
+                prefsRepo.skipUpdateTag(current.tagName)
+                _statusBannerMessage.value = "Versi ${current.tagName} dilewati sementara."
+            }
+            _availableUpdate.value = null
+        }
+    }
+
+    fun checkForAppUpdate(manual: Boolean = true) {
+        if (_isCheckingUpdate.value) return
+        viewModelScope.launch {
+            val prefs = prefsRepo.preferencesFlow.first()
+            val repoSlug = GitHubUpdateChecker.resolveEffectiveRepoSlug(
+                userConfiguredSlug = prefs.githubUpdateRepo,
+                buildConfigSlug = BuildConfig.GITHUB_REPO
+            )
+            if (repoSlug.isBlank()) {
+                _updateStatusText.value = "Atur repositori GitHub (owner/repo) untuk cek otomatis"
+                if (manual) {
+                    _statusBannerMessage.value = "Isi nama repositori GitHub Anda (contoh: username/XynoosFinance) di Pengaturan."
+                }
+                return@launch
+            }
+
+            val now = System.currentTimeMillis()
+            if (!manual && now - prefs.lastUpdateCheckMillis < 1_800_000L) {
+                return@launch
+            }
+
+            _isCheckingUpdate.value = true
+            _updateStatusText.value = "Memeriksa rilis terbaru di $repoSlug..."
+            val res = GitHubUpdateChecker.fetchLatestRelease(
+                repoSlug = repoSlug,
+                currentVersionCode = BuildConfig.VERSION_CODE,
+                currentVersionName = BuildConfig.VERSION_NAME
+            )
+            _isCheckingUpdate.value = false
+            prefsRepo.recordUpdateCheck(now)
+
+            when (res) {
+                is GitHubUpdateCheckResult.NotConfigured -> {
+                    _updateStatusText.value = "Format repositori harus owner/nama-repo"
+                }
+                is GitHubUpdateCheckResult.UpToDate -> {
+                    _availableUpdate.value = null
+                    _updateStatusText.value = "Sudah versi terbaru (v${BuildConfig.VERSION_NAME} • rilis GitHub: ${res.latestTag})"
+                    if (manual) {
+                        _statusBannerMessage.value = "Aplikasi sudah memakai versi terbaru (v${BuildConfig.VERSION_NAME})."
+                    }
+                }
+                is GitHubUpdateCheckResult.UpdateAvailable -> {
+                    val info = res.update
+                    _updateStatusText.value = if (info.isMandatory) {
+                        "Pembaruan WAJIB tersedia: ${info.tagName}"
+                    } else {
+                        "Versi baru tersedia: ${info.tagName}"
+                    }
+                    val skipped = !info.isMandatory && prefs.skippedUpdateTag == info.tagName
+                    if (manual || !skipped) {
+                        _availableUpdate.value = info
+                    }
+                }
+                is GitHubUpdateCheckResult.Error -> {
+                    _updateStatusText.value = res.message
+                    if (manual) {
+                        _statusBannerMessage.value = res.message
+                    }
+                }
+            }
         }
     }
 }

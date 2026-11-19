@@ -17,8 +17,12 @@ android {
     applicationId = "com.aistudio.xynoosfinance.xfnmkz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "2.0.0"
+    val propVersionCode = (project.findProperty("xynoosVersionCode") as? String)?.toIntOrNull()
+    val propVersionName = (project.findProperty("xynoosVersionName") as? String)?.trim()?.takeIf { it.isNotEmpty() }
+    val propGithubRepo = (project.findProperty("xynoosGithubRepo") as? String)?.trim().orEmpty().replace("\"", "")
+    versionCode = propVersionCode ?: 2
+    versionName = propVersionName ?: "2.0.0"
+    buildConfigField("String", "GITHUB_REPO", "\"$propGithubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

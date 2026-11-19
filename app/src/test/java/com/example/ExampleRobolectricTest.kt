@@ -1,6 +1,10 @@
 package com.example
 
 import android.content.Context
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.example.data.local.UserPreferencesState
@@ -257,6 +261,236 @@ class ExampleRobolectricTest {
         repo.saveAccount(acc)
         assertTrue(dao.getUnsyncedAccounts(userId).any { it.id == "acc_offline" })
     }
+
+    @Test
+    fun githubUpdateChecker_parsesMandatoryAndOptionalReleasesAndApkAssets() {
+        val mandatoryJson = """
+            {
+              "tag_name": "v2.1.0",
+              "name": "XynoosFinance v2.1.0",
+              "draft": false,
+              "html_url": "https://github.com/xynoos/XynoosFinance/releases/tag/v2.1.0",
+              "body": "## Rilis Baru\\n- Tambah fitur trigger update\\n<!-- XYNOOS_META:versionCode=5;minVersionCode=5;mandatory=true -->",
+              "assets": [
+                {
+                  "name": "XynoosFinance-v2.1.0-Debug.apk",
+                  "browser_download_url": "https://github.com/xynoos/XynoosFinance/releases/download/v2.1.0/XynoosFinance-v2.1.0-Debug.apk"
+                },
+                {
+                  "name": "XynoosFinance-v2.1.0-Release.apk",
+                  "browser_download_url": "https://github.com/xynoos/XynoosFinance/releases/download/v2.1.0/XynoosFinance-v2.1.0-Release.apk"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val result = com.example.data.remote.GitHubUpdateChecker.parseReleaseJson(
+            jsonString = mandatoryJson,
+            currentVersionCode = 2,
+            currentVersionName = "2.0.0"
+        )
+        assertTrue(result is com.example.data.remote.GitHubUpdateCheckResult.UpdateAvailable)
+        val info = (result as com.example.data.remote.GitHubUpdateCheckResult.UpdateAvailable).update
+        assertTrue(info.isMandatory)
+        assertEquals("v2.1.0", info.tagName)
+        assertEquals(5, info.remoteVersionCode)
+        assertTrue(info.apkDownloadUrl.endsWith("-Release.apk"))
+        assertTrue(!info.releaseNotes.contains("XYNOOS_META"))
+
+        val upToDate = com.example.data.remote.GitHubUpdateChecker.parseReleaseJson(
+            jsonString = mandatoryJson,
+            currentVersionCode = 5,
+            currentVersionName = "2.1.0"
+        )
+        assertTrue(upToDate is com.example.data.remote.GitHubUpdateCheckResult.UpToDate)
+    }
+
+    @org.junit.Rule
+    @JvmField
+    val composeTestRule = androidx.compose.ui.test.junit4.createComposeRule()
+
+    @Test
+    fun mainActivity_coldLaunchAndSplashTransition_completesWithoutCrash() {
+        val controller = org.robolectric.Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        org.junit.Assert.assertNotNull(activity)
+        org.robolectric.shadows.ShadowLooper.idleMainLooper(900L, java.util.concurrent.TimeUnit.MILLISECONDS)
+        controller.pause().stop().destroy()
+    }
+
+    @Test
+    fun allPrimaryScreensAndDialogs_renderAndNavigateWithoutCrash() {
+        val prefsRepo = com.example.data.local.UserPreferencesRepository(context)
+        val offlineFirstRepo = OfflineFirstFinanceRepository(
+            dao = database.financeDao(),
+            cloudRepo = null,
+            userId = "ui_test_user"
+        )
+        val viewModel = com.example.ui.viewmodel.XynoosViewModel(
+            repository = offlineFirstRepo,
+            cloudRepo = null,
+            prefsRepo = prefsRepo,
+            currentUserId = "ui_test_user",
+            userEmail = "test@xynoos.id",
+            appContext = context
+        )
+        runBlocking {
+            prefsRepo.completeOnboarding(
+                displayName = "Pengguna Uji",
+                currencyCode = "IDR",
+                profileType = com.example.domain.FinancialProfileType.COMBINED,
+                remindersEnabled = false,
+                themeMode = com.example.domain.AppThemeMode.DARK
+            )
+            offlineFirstRepo.ensureDefaultCategoriesSeeded()
+            offlineFirstRepo.saveAccount(
+                FinancialAccountModel(
+                    id = "acc_test_1",
+                    userId = "ui_test_user",
+                    name = "BCA Utama",
+                    accountType = AccountType.BANK,
+                    openingBalanceIdr = 10_000_000L,
+                    currentBalanceIdr = 10_000_000L,
+                    colorHex = "#49E0A0"
+                )
+            )
+            offlineFirstRepo.saveTransaction(
+                TransactionModel(
+                    id = "tx_ui_1",
+                    userId = "ui_test_user",
+                    type = TransactionType.EXPENSE,
+                    amountIdr = 50_000L,
+                    title = "Beli Bensin",
+                    categoryId = "cat_fuel",
+                    categoryName = "Beli Bensin",
+                    accountId = "acc_test_1",
+                    accountName = "BCA Utama",
+                    transactionDateMillis = System.currentTimeMillis()
+                )
+            )
+        }
+
+        composeTestRule.setContent {
+            com.example.ui.theme.XynoosFinanceTheme(themeMode = com.example.domain.AppThemeMode.DARK) {
+                XynoosAuthenticatedWorkspace(
+                    viewModel = viewModel,
+                    onSignOut = {}
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("home_dashboard_screen").assertExists()
+
+        // Navigate across all bottom tabs
+        composeTestRule.onNodeWithTag("nav_tab_transactions").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("nav_tab_usd_market").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("usd_live_market_subscreen").assertExists()
+
+        composeTestRule.onNodeWithTag("nav_tab_goals").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tab_budgets_chip").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("tab_monthly_annual_chip").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("nav_tab_ai").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("nav_tab_more").performClick()
+        composeTestRule.waitForIdle()
+
+        // Back to home -> Monthly/Annual dedicated screen -> back -> Quick Add Transaction form
+        composeTestRule.onNodeWithTag("nav_tab_home").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("home_dashboard_screen")
+            .performScrollToNode(hasTestTag("home_open_monthly_annual_card"))
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("home_open_monthly_annual_card").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("monthly_annual_budget_subscreen").assertExists()
+        composeTestRule.onNodeWithTag("monthly_annual_panel_list")
+            .performScrollToNode(hasTestTag("scope_annual_chip"))
+        composeTestRule.onNodeWithTag("scope_annual_chip").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("monthly_annual_back_button").performClick()
+        composeTestRule.waitForIdle()
+
+        composeTestRule.onNodeWithTag("fab_quick_add_transaction").performClick()
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("transaction_form_sheet").assertExists()
+    }
+
+    @Test
+    fun onboardingAndPatternLockAndUpdateDialogAndWelcome_renderCleanly() {
+        composeTestRule.setContent {
+            com.example.ui.theme.XynoosFinanceTheme(themeMode = com.example.domain.AppThemeMode.DARK) {
+                com.example.ui.screens.OnboardingWizardScreen(
+                    initialDisplayName = "Budi",
+                    currentThemeMode = com.example.domain.AppThemeMode.DARK,
+                    onThemeChanged = {},
+                    onCompleteOnboarding = { _, _, _, _, _, _, _, _, _, _ -> }
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("onboarding_screen").assertExists()
+        repeat(4) {
+            composeTestRule.onNodeWithTag("onboarding_next_button").performClick()
+            composeTestRule.waitForIdle()
+        }
+    }
+
+    @Test
+    fun welcomeAuthAndPatternLockAndUpdateDialog_andAppCheckHelpers_executeSafely() {
+        com.example.data.remote.configureAppCheck(context, null)
+        com.example.notifications.ReminderNotificationHelper.ensureChannelCreated(context)
+        com.example.notifications.ReminderNotificationHelper.sendPreviewReminderNotification(
+            context = context,
+            title = "Uji Notifikasi",
+            availableCashIdr = 1_000_000L,
+            isPrivacyMode = false
+        )
+
+        val patternHash = com.example.ui.components.PatternLockUtil.hashPattern(listOf(0, 1, 2, 5))
+        val updateInfo = com.example.data.remote.AppUpdateInfo(
+            tagName = "v2.0.2",
+            versionName = "2.0.2",
+            remoteVersionCode = 10,
+            minRequiredVersionCode = 10,
+            isMandatory = true,
+            releaseTitle = "Rilis Wajib",
+            releaseNotes = "Perbaikan force close",
+            apkDownloadUrl = "https://github.com/samuelindra123/xynoosfinance/releases/latest",
+            releasePageUrl = "https://github.com/samuelindra123/xynoosfinance/releases/latest"
+        )
+
+        composeTestRule.setContent {
+            com.example.ui.theme.XynoosFinanceTheme(themeMode = com.example.domain.AppThemeMode.DARK) {
+                androidx.compose.foundation.layout.Box {
+                    com.example.ui.screens.WelcomeAuthScreen(onAuthSuccess = {})
+                    com.example.ui.components.PatternLockGateScreen(
+                        displayName = "Samuel",
+                        storedPatternHash = patternHash,
+                        onUnlocked = {},
+                        onForgotPatternSignOut = {}
+                    )
+                    com.example.ui.components.AppUpdatePromptDialog(
+                        updateInfo = updateInfo,
+                        currentVersionLabel = "v2.0.1 (Build 3)",
+                        isChecking = false,
+                        onUpdateNow = {},
+                        onRecheck = {},
+                        onRemindLater = {},
+                        onSkipVersion = {}
+                    )
+                }
+            }
+        }
+        composeTestRule.waitForIdle()
+        composeTestRule.onNodeWithTag("pattern_lock_gate_screen").assertExists()
+        composeTestRule.onNodeWithTag("app_update_prompt_dialog").assertExists()
+    }
 }
-
-

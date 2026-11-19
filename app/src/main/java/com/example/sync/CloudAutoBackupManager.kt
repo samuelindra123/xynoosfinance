@@ -10,6 +10,7 @@ import com.example.data.repository.OfflineFirstFinanceRepository
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -55,7 +56,8 @@ class CloudAutoBackupManager(
     private val appContext = context.applicationContext
     private val connectivityManager =
         appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val safeHandler = CoroutineExceptionHandler { _, _ -> }
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + safeHandler)
     private val syncMutex = Mutex()
 
     private val _isOnline = MutableStateFlow(checkCurrentConnectivity())
@@ -149,13 +151,13 @@ class CloudAutoBackupManager(
                 res
             } catch (e: CancellationException) {
                 throw e
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 _statusState.value = _statusState.value.copy(
                     isOnline = _isOnline.value,
                     isBackingUp = false,
                     statusText = "Cadangan lokal aman • Coba ulang nanti"
                 )
-                Result.failure(e)
+                Result.failure(t)
             }
         }
     }

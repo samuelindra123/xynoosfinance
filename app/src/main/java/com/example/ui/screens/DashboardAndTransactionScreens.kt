@@ -939,7 +939,7 @@ fun TransactionFormBottomSheet(
                                         fontWeight = FontWeight.Bold
                                     )
                                     val fullDateStamp = remember(editingTransaction) {
-                                        SimpleDateFormat("dd MMM yyyy • HH:mm WIB", Locale("id", "ID"))
+                                        SimpleDateFormat("dd MMM yyyy • HH:mm 'WIB'", Locale("id", "ID"))
                                             .format(Date(editingTransaction?.transactionDateMillis ?: System.currentTimeMillis()))
                                     }
                                     Text(

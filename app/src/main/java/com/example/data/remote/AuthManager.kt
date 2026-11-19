@@ -17,6 +17,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
@@ -49,13 +50,18 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
  */
 fun attemptAutoSignIn(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onUnauthenticated: () -> Unit,
     scope: CoroutineScope
 ) {
-    if (Firebase.auth.currentUser != null) {
+    val firebaseAuth = runCatching { Firebase.auth }.getOrNull()
+    if (firebaseAuth?.currentUser != null) {
         onAuthSuccess()
+        return
+    }
+    if (credentialManager == null || firebaseAuth == null) {
+        onUnauthenticated()
         return
     }
     val clientId = getDefaultWebClientId(context) ?: run {
@@ -74,17 +80,20 @@ fun attemptAutoSignIn(
 
     scope.launch {
         try {
-            val result = credentialManager.getCredential(context, request)
+            val activityContext = context as? Activity ?: context
+            val result = credentialManager.getCredential(activityContext, request)
             val credential = result.credential
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
+                firebaseAuth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
             } else {
                 onUnauthenticated()
             }
-        } catch (e: Exception) {
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
             onUnauthenticated()
         }
     }
@@ -95,12 +104,20 @@ fun attemptAutoSignIn(
  */
 fun onGoogleSignInClicked(
     context: Context,
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onAuthSuccess: () -> Unit,
     onAuthError: (String) -> Unit,
     scope: CoroutineScope,
     onAuthCancelled: () -> Unit = {}
 ) {
+    if (credentialManager == null) {
+        onAuthError("Layanan Google Credential Manager tidak tersedia di perangkat ini.")
+        return
+    }
+    val firebaseAuth = runCatching { Firebase.auth }.getOrNull() ?: run {
+        onAuthError("Layanan autentikasi Firebase belum siap.")
+        return
+    }
     val clientId = getDefaultWebClientId(context) ?: run {
         onAuthError("Konfigurasi Google Sign-In belum ditemukan (default_web_client_id).")
         return
@@ -117,32 +134,36 @@ fun onGoogleSignInClicked(
             if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
                 val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                Firebase.auth.signInWithCredential(authCredential).await()
+                firebaseAuth.signInWithCredential(authCredential).await()
                 onAuthSuccess()
             } else {
                 onAuthError("Tipe kredensial Google tidak dikenali.")
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: GetCredentialCancellationException) {
             Log.w(TAG, "Google Sign-In cancelled or dismissed: ${e.message}", e)
             onAuthCancelled()
-        } catch (e: Exception) {
-            Log.e(TAG, "Google Sign-In failed", e)
-            onAuthError(e.localizedMessage ?: "Gagal masuk dengan Google.")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Google Sign-In failed", t)
+            onAuthError(t.localizedMessage ?: "Gagal masuk dengan Google. Pastikan Google Play Services aktif.")
         }
     }
 }
 
 fun signOutFromGoogle(
-    credentialManager: CredentialManager,
+    credentialManager: CredentialManager?,
     onSignOutComplete: () -> Unit,
     scope: CoroutineScope
 ) {
-    Firebase.auth.signOut()
+    runCatching { Firebase.auth.signOut() }
     scope.launch {
         try {
-            credentialManager.clearCredentialState(ClearCredentialStateRequest())
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear credential state", e)
+            credentialManager?.clearCredentialState(ClearCredentialStateRequest())
+        } catch (e: CancellationException) {
+            throw e
+        } catch (t: Throwable) {
+            Log.e(TAG, "Failed to clear credential state", t)
         } finally {
             onSignOutComplete()
         }

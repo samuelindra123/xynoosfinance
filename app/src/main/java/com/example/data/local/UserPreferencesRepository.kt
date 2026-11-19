@@ -1,8 +1,10 @@
 package com.example.data.local
 
 import android.content.Context
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
@@ -10,9 +12,16 @@ import androidx.datastore.preferences.preferencesDataStore
 import com.example.domain.AppThemeMode
 import com.example.domain.FinancialProfileType
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
-private val Context.xynoosDataStore by preferencesDataStore(name = "xynoos_user_preferences")
+private val Context.xynoosDataStore by preferencesDataStore(
+    name = "xynoos_user_preferences",
+    corruptionHandler = ReplaceFileCorruptionHandler(
+        produceNewData = { emptyPreferences() }
+    )
+)
 
 data class UserPreferencesState(
     val themeMode: AppThemeMode = AppThemeMode.DARK,
@@ -38,7 +47,10 @@ data class UserPreferencesState(
     val reportFooterText: String = "Dokumen rahasia — Dihasilkan secara deterministik oleh XynoosFinance",
     val reportSignatory: String = "",
     val whatsAppPhone: String = "",
-    val whatsAppAutoNotifyOnTransaction: Boolean = false
+    val whatsAppAutoNotifyOnTransaction: Boolean = false,
+    val githubUpdateRepo: String = "",
+    val lastUpdateCheckMillis: Long = 0L,
+    val skippedUpdateTag: String = ""
 )
 
 class UserPreferencesRepository(private val context: Context) {
@@ -68,9 +80,20 @@ class UserPreferencesRepository(private val context: Context) {
         val REPORT_SIGNATORY = stringPreferencesKey("report_signatory")
         val WHATSAPP_PHONE = stringPreferencesKey("whatsapp_phone")
         val WHATSAPP_AUTO_NOTIFY = booleanPreferencesKey("whatsapp_auto_notify")
+        val GITHUB_UPDATE_REPO = stringPreferencesKey("github_update_repo")
+        val LAST_UPDATE_CHECK_MILLIS = longPreferencesKey("last_update_check_millis")
+        val SKIPPED_UPDATE_TAG = stringPreferencesKey("skipped_update_tag")
     }
 
-    val preferencesFlow: Flow<UserPreferencesState> = context.xynoosDataStore.data.map { prefs ->
+    val preferencesFlow: Flow<UserPreferencesState> = context.xynoosDataStore.data
+        .catch { exception ->
+            if (exception is IOException) {
+                emit(emptyPreferences())
+            } else {
+                throw exception
+            }
+        }
+        .map { prefs ->
         val themeStr = prefs[Keys.THEME_MODE] ?: AppThemeMode.DARK.name
         val profileStr = prefs[Keys.PROFILE_TYPE] ?: FinancialProfileType.PERSONAL.name
         UserPreferencesState(
@@ -97,7 +120,10 @@ class UserPreferencesRepository(private val context: Context) {
             reportFooterText = prefs[Keys.REPORT_FOOTER_TEXT] ?: "Dokumen rahasia — Dihasilkan secara deterministik oleh XynoosFinance",
             reportSignatory = prefs[Keys.REPORT_SIGNATORY] ?: (prefs[Keys.DISPLAY_NAME] ?: ""),
             whatsAppPhone = prefs[Keys.WHATSAPP_PHONE] ?: "",
-            whatsAppAutoNotifyOnTransaction = prefs[Keys.WHATSAPP_AUTO_NOTIFY] ?: false
+            whatsAppAutoNotifyOnTransaction = prefs[Keys.WHATSAPP_AUTO_NOTIFY] ?: false,
+            githubUpdateRepo = prefs[Keys.GITHUB_UPDATE_REPO] ?: "",
+            lastUpdateCheckMillis = prefs[Keys.LAST_UPDATE_CHECK_MILLIS] ?: 0L,
+            skippedUpdateTag = prefs[Keys.SKIPPED_UPDATE_TAG] ?: ""
         )
     }
 
@@ -216,6 +242,24 @@ class UserPreferencesRepository(private val context: Context) {
         context.xynoosDataStore.edit { prefs ->
             prefs[Keys.WHATSAPP_PHONE] = phoneNumber.trim()
             prefs[Keys.WHATSAPP_AUTO_NOTIFY] = autoNotify
+        }
+    }
+
+    suspend fun updateGitHubRepoSlug(repoSlug: String) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.GITHUB_UPDATE_REPO] = repoSlug.trim().removePrefix("https://github.com/").trim('/')
+        }
+    }
+
+    suspend fun recordUpdateCheck(timestampMillis: Long = System.currentTimeMillis()) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.LAST_UPDATE_CHECK_MILLIS] = timestampMillis
+        }
+    }
+
+    suspend fun skipUpdateTag(tagName: String) {
+        context.xynoosDataStore.edit { prefs ->
+            prefs[Keys.SKIPPED_UPDATE_TAG] = tagName.trim()
         }
     }
 }

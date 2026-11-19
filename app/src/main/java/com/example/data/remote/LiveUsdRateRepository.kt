@@ -70,6 +70,7 @@ class LiveUsdRateRepository {
         fetchAndRefreshMarketState(forceNetwork = false)
 
     companion object {
+        private val candleLock = Any()
         private var cachedSpotRateIdr: Double = 16250.0
         private var lastNetworkFetchMillis: Long = 0L
         private val candleHistory = mutableListOf<UsdMinuteCandle>()
@@ -106,8 +107,12 @@ class LiveUsdRateRepository {
             var networkSuccess = false
             var source = "Spot Pasar Valas USD/IDR (Live 1m)"
 
+            val needsNetworkFetch = synchronized(candleLock) {
+                forceNetwork || now - lastNetworkFetchMillis >= 55_000L || candleHistory.isEmpty()
+            }
+
             // Fetch from real public FX APIs at least every 60 seconds or when forced
-            if (forceNetwork || now - lastNetworkFetchMillis >= 55_000L || candleHistory.isEmpty()) {
+            if (needsNetworkFetch) {
                 val body = httpGetString("https://open.er-api.com/v6/latest/USD")
                 if (!body.isNullOrBlank()) {
                     runCatching {
@@ -115,8 +120,10 @@ class LiveUsdRateRepository {
                         val rates = json.optJSONObject("rates")
                         val idr = rates?.optDouble("IDR", 0.0) ?: 0.0
                         if (idr > 10000.0) {
-                            cachedSpotRateIdr = idr
-                            lastNetworkFetchMillis = now
+                            synchronized(candleLock) {
+                                cachedSpotRateIdr = idr
+                                lastNetworkFetchMillis = now
+                            }
                             networkSuccess = true
                             source = "Open Exchange Rates Spot USD/IDR (Real-Time)"
                         }
@@ -131,8 +138,10 @@ class LiveUsdRateRepository {
                             val rates = json.optJSONObject("rates")
                             val idr = rates?.optDouble("IDR", 0.0) ?: 0.0
                             if (idr > 10000.0) {
-                                cachedSpotRateIdr = idr
-                                lastNetworkFetchMillis = now
+                                synchronized(candleLock) {
+                                    cachedSpotRateIdr = idr
+                                    lastNetworkFetchMillis = now
+                                }
                                 networkSuccess = true
                                 source = "Frankfurter ECB Spot USD/IDR (Real-Time)"
                             }
@@ -143,33 +152,35 @@ class LiveUsdRateRepository {
                 networkSuccess = true
             }
 
-            // Seed initial 36 1-minute candles if empty so the professional stock chart is immediately rich
-            if (candleHistory.isEmpty()) {
-                seedInitialCandles(baseRate = cachedSpotRateIdr, nowMillis = now)
-            } else {
-                appendNextMinuteCandle(spotAnchor = cachedSpotRateIdr, nowMillis = now)
+            synchronized(candleLock) {
+                // Seed initial 36 1-minute candles if empty so the professional stock chart is immediately rich
+                if (candleHistory.isEmpty()) {
+                    seedInitialCandles(baseRate = cachedSpotRateIdr, nowMillis = now)
+                } else {
+                    appendNextMinuteCandle(spotAnchor = cachedSpotRateIdr, nowMillis = now)
+                }
+
+                val currentClose = candleHistory.lastOrNull()?.closeRateIdr ?: cachedSpotRateIdr
+                val open24h = candleHistory.firstOrNull()?.openRateIdr ?: (currentClose - 45.0)
+                val high24h = candleHistory.maxOfOrNull { it.highRateIdr } ?: (currentClose + 65.0)
+                val low24h = candleHistory.minOfOrNull { it.lowRateIdr } ?: (currentClose - 65.0)
+                val changeIdr = currentClose - open24h
+                val changePct = if (open24h > 0.0) (changeIdr / open24h) * 100.0 else 0.0
+
+                LiveUsdMarketState(
+                    currentRateIdr = (currentClose * 100.0).roundToInt() / 100.0,
+                    open24hRateIdr = (open24h * 100.0).roundToInt() / 100.0,
+                    high24hRateIdr = (high24h * 100.0).roundToInt() / 100.0,
+                    low24hRateIdr = (low24h * 100.0).roundToInt() / 100.0,
+                    change24hIdr = (changeIdr * 100.0).roundToInt() / 100.0,
+                    change24hPercent = (changePct * 100.0).roundToInt() / 100.0,
+                    lastUpdatedMillis = now,
+                    nextUpdateSecondsRemaining = 60,
+                    sourceLabel = source,
+                    isLiveNetworkConnected = networkSuccess,
+                    candles = candleHistory.toList()
+                )
             }
-
-            val currentClose = candleHistory.lastOrNull()?.closeRateIdr ?: cachedSpotRateIdr
-            val open24h = candleHistory.firstOrNull()?.openRateIdr ?: (currentClose - 45.0)
-            val high24h = candleHistory.maxOfOrNull { it.highRateIdr } ?: (currentClose + 65.0)
-            val low24h = candleHistory.minOfOrNull { it.lowRateIdr } ?: (currentClose - 65.0)
-            val changeIdr = currentClose - open24h
-            val changePct = if (open24h > 0.0) (changeIdr / open24h) * 100.0 else 0.0
-
-            LiveUsdMarketState(
-                currentRateIdr = (currentClose * 100.0).roundToInt() / 100.0,
-                open24hRateIdr = (open24h * 100.0).roundToInt() / 100.0,
-                high24hRateIdr = (high24h * 100.0).roundToInt() / 100.0,
-                low24hRateIdr = (low24h * 100.0).roundToInt() / 100.0,
-                change24hIdr = (changeIdr * 100.0).roundToInt() / 100.0,
-                change24hPercent = (changePct * 100.0).roundToInt() / 100.0,
-                lastUpdatedMillis = now,
-                nextUpdateSecondsRemaining = 60,
-                sourceLabel = source,
-                isLiveNetworkConnected = networkSuccess,
-                candles = candleHistory.toList()
-            )
         }
 
         private fun seedInitialCandles(baseRate: Double, nowMillis: Long) {
