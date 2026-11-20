@@ -9,6 +9,7 @@ import com.example.domain.AccountType
 import com.example.domain.AllocationRuleType
 import com.example.domain.BudgetModel
 import com.example.domain.FinancialAccountModel
+import com.example.domain.FinancialProfileType
 import com.example.domain.FinancialGoalModel
 import com.example.domain.GoalPriority
 import com.example.domain.InvoiceReferenceModel
@@ -25,6 +26,7 @@ import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.ServerTimestamp
 import com.google.firebase.firestore.snapshots
@@ -93,19 +95,40 @@ data class FirestoreTransactionDoc(
 
 class FirestoreFinanceRepository(
     private val db: FirebaseFirestore,
-    private val auth: FirebaseAuth = Firebase.auth
+    private val auth: FirebaseAuth = Firebase.auth,
+    private val sessionUid: String? = auth.currentUser?.uid
 ) {
     // CRITICAL: Always initialize with R.string.firestore_database_id
-    constructor(context: Context) : this(
+    constructor(context: Context, sessionUid: String) : this(
         FirebaseFirestore.getInstance(
             context.applicationContext.getString(R.string.firestore_database_id)
         ),
-        Firebase.auth
+        Firebase.auth,
+        sessionUid
     )
 
     private fun requireUserId(): String {
-        return auth.currentUser?.uid
-            ?: throw IllegalStateException("Pengguna harus masuk dengan Google terlebih dahulu.")
+        val uid = checkNotNull(sessionUid) { "Pengguna harus masuk dengan Google terlebih dahulu." }
+        check(auth.currentUser?.uid == uid) { "Sesi Google sudah berubah. Silakan masuk kembali." }
+        return uid
+    }
+
+    data class CompletedProfile(
+        val displayName: String,
+        val currencyCode: String,
+        val type: FinancialProfileType
+    )
+
+    suspend fun fetchCompletedProfile(): CompletedProfile? {
+        val uid = requireUserId()
+        val profile = db.collection("users").document(uid).get(Source.SERVER).await()
+        if (profile.getBoolean("onboardingCompleted") != true) return null
+        val name = profile.getString("displayName").orEmpty()
+        val currency = profile.getString("currencyCode") ?: "IDR"
+        val type = FinancialProfileType.entries.firstOrNull {
+            it.name == profile.getString("financialProfileType")
+        } ?: FinancialProfileType.PERSONAL
+        return CompletedProfile(name, currency, type)
     }
 
     suspend fun upsertUserProfile(
@@ -156,6 +179,9 @@ class FirestoreFinanceRepository(
         } catch (e: Exception) {
             return Result.failure(e)
         }
+        if (account.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
+        }
         val docRef = db.collection("users").document(uid).collection("accounts").document(account.id)
         return try {
             val existing = docRef.get().await()
@@ -199,6 +225,9 @@ class FirestoreFinanceRepository(
             requireUserId()
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+        if (tx.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
         }
         val docRef = db.collection("users").document(uid).collection("transactions").document(tx.id)
         return try {
@@ -279,7 +308,7 @@ class FirestoreFinanceRepository(
                 .document(uid)
                 .collection("transactions")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             val list = snapshot.toObjects(
                 FirestoreTransactionDoc::class.java,
@@ -295,7 +324,8 @@ class FirestoreFinanceRepository(
     }
 
     fun observeTransactions(targetUid: String? = null): Flow<List<TransactionModel>> = flow {
-        val uid = targetUid ?: auth.currentUser?.uid ?: "unauthenticated_uid"
+        val uid = requireUserId()
+        check(targetUid == null || targetUid == uid) { "Data berasal dari akun lain." }
         val path = "users/$uid/transactions"
         emitAll(
             db.collection("users")
@@ -317,16 +347,12 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchAccounts(): List<FinancialAccountModel> {
-        val uid = try {
-            requireUserId()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        val uid = requireUserId()
         val path = "users/$uid/accounts"
         return try {
             val snap = db.collection("users").document(uid).collection("accounts")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             snap.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: return@mapNotNull null
@@ -349,7 +375,7 @@ class FirestoreFinanceRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.LIST, path)
-            emptyList()
+            throw e
         }
     }
 
@@ -358,6 +384,9 @@ class FirestoreFinanceRepository(
             requireUserId()
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+        if (category.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
         }
         val docRef = db.collection("users").document(uid).collection("categories").document(category.id)
         return try {
@@ -391,16 +420,12 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchCategories(): List<com.example.domain.TransactionCategoryModel> {
-        val uid = try {
-            requireUserId()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        val uid = requireUserId()
         val path = "users/$uid/categories"
         return try {
             val snap = db.collection("users").document(uid).collection("categories")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             snap.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: return@mapNotNull null
@@ -420,7 +445,7 @@ class FirestoreFinanceRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.LIST, path)
-            emptyList()
+            throw e
         }
     }
 
@@ -429,6 +454,9 @@ class FirestoreFinanceRepository(
             requireUserId()
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+        if (budget.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
         }
         val docRef = db.collection("users").document(uid).collection("budgets").document(budget.id)
         return try {
@@ -462,16 +490,12 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchBudgets(): List<BudgetModel> {
-        val uid = try {
-            requireUserId()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        val uid = requireUserId()
         val path = "users/$uid/budgets"
         return try {
             val snap = db.collection("users").document(uid).collection("budgets")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             snap.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: return@mapNotNull null
@@ -494,7 +518,7 @@ class FirestoreFinanceRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.LIST, path)
-            emptyList()
+            throw e
         }
     }
 
@@ -503,6 +527,9 @@ class FirestoreFinanceRepository(
             requireUserId()
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+        if (goal.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
         }
         val docRef = db.collection("users").document(uid).collection("goals").document(goal.id)
         return try {
@@ -539,16 +566,12 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchGoals(): List<FinancialGoalModel> {
-        val uid = try {
-            requireUserId()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        val uid = requireUserId()
         val path = "users/$uid/goals"
         return try {
             val snap = db.collection("users").document(uid).collection("goals")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             snap.documents.mapNotNull { doc ->
                 val name = doc.getString("name") ?: return@mapNotNull null
@@ -574,7 +597,7 @@ class FirestoreFinanceRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.LIST, path)
-            emptyList()
+            throw e
         }
     }
 
@@ -583,6 +606,9 @@ class FirestoreFinanceRepository(
             requireUserId()
         } catch (e: Exception) {
             return Result.failure(e)
+        }
+        if (invoice.userId != uid) {
+            return Result.failure(IllegalArgumentException("Data berasal dari akun lain."))
         }
         val docRef = db.collection("users").document(uid).collection("invoices").document(invoice.id)
         return try {
@@ -616,16 +642,12 @@ class FirestoreFinanceRepository(
     }
 
     suspend fun fetchInvoices(): List<InvoiceReferenceModel> {
-        val uid = try {
-            requireUserId()
-        } catch (e: Exception) {
-            return emptyList()
-        }
+        val uid = requireUserId()
         val path = "users/$uid/invoices"
         return try {
             val snap = db.collection("users").document(uid).collection("invoices")
                 .whereEqualTo("userId", uid)
-                .get()
+                .get(Source.SERVER)
                 .await()
             snap.documents.mapNotNull { doc ->
                 val invNumber = doc.getString("invoiceNumber") ?: return@mapNotNull null
@@ -649,7 +671,7 @@ class FirestoreFinanceRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.LIST, path)
-            emptyList()
+            throw e
         }
     }
 

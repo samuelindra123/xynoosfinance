@@ -53,36 +53,39 @@ data class UserPreferencesState(
     val skippedUpdateTag: String = ""
 )
 
-class UserPreferencesRepository(private val context: Context) {
+class UserPreferencesRepository(private val context: Context, userId: String? = null) {
+    private val keys = Keys(userId)
 
-    private object Keys {
-        val THEME_MODE = stringPreferencesKey("theme_mode")
-        val PRIVACY_MODE = booleanPreferencesKey("privacy_mode")
-        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
-        val DISPLAY_NAME = stringPreferencesKey("display_name")
-        val CURRENCY_CODE = stringPreferencesKey("currency_code")
-        val PROFILE_TYPE = stringPreferencesKey("financial_profile_type")
-        val REMINDERS_ENABLED = booleanPreferencesKey("reminders_enabled")
-        val REMINDER_HOUR = intPreferencesKey("reminder_hour")
-        val REMINDER_MINUTE = intPreferencesKey("reminder_minute")
-        val QUIET_HOURS = booleanPreferencesKey("quiet_hours_enabled")
-        val BUDGET_ALERTS_ENABLED = booleanPreferencesKey("budget_alerts_enabled")
-        val ACTIVITY_NOTIFS_ENABLED = booleanPreferencesKey("activity_notifs_enabled")
-        val AUTO_BACKUP_3MIN = booleanPreferencesKey("auto_backup_3min_enabled")
-        val LAST_AUTO_BACKUP_MILLIS = longPreferencesKey("last_auto_backup_millis")
-        val PATTERN_LOCK_ENABLED = booleanPreferencesKey("pattern_lock_enabled")
-        val PATTERN_LOCK_HASH = stringPreferencesKey("pattern_lock_hash")
-        val PATTERN_LOCK_ON_RESUME = booleanPreferencesKey("pattern_lock_on_resume")
-        val REPORT_ORG_NAME = stringPreferencesKey("report_org_name")
-        val REPORT_ORG_ADDRESS = stringPreferencesKey("report_org_address")
-        val REPORT_CONTACT_INFO = stringPreferencesKey("report_contact_info")
-        val REPORT_FOOTER_TEXT = stringPreferencesKey("report_footer_text")
-        val REPORT_SIGNATORY = stringPreferencesKey("report_signatory")
-        val WHATSAPP_PHONE = stringPreferencesKey("whatsapp_phone")
-        val WHATSAPP_AUTO_NOTIFY = booleanPreferencesKey("whatsapp_auto_notify")
-        val GITHUB_UPDATE_REPO = stringPreferencesKey("github_update_repo")
-        val LAST_UPDATE_CHECK_MILLIS = longPreferencesKey("last_update_check_millis")
-        val SKIPPED_UPDATE_TAG = stringPreferencesKey("skipped_update_tag")
+    private class Keys(private val userId: String?) {
+        private fun scoped(name: String): String = userId?.let { "user:$it:$name" } ?: name
+
+        val THEME_MODE = stringPreferencesKey(scoped("theme_mode"))
+        val PRIVACY_MODE = booleanPreferencesKey(scoped("privacy_mode"))
+        val ONBOARDING_COMPLETED = booleanPreferencesKey(scoped("onboarding_completed"))
+        val DISPLAY_NAME = stringPreferencesKey(scoped("display_name"))
+        val CURRENCY_CODE = stringPreferencesKey(scoped("currency_code"))
+        val PROFILE_TYPE = stringPreferencesKey(scoped("financial_profile_type"))
+        val REMINDERS_ENABLED = booleanPreferencesKey(scoped("reminders_enabled"))
+        val REMINDER_HOUR = intPreferencesKey(scoped("reminder_hour"))
+        val REMINDER_MINUTE = intPreferencesKey(scoped("reminder_minute"))
+        val QUIET_HOURS = booleanPreferencesKey(scoped("quiet_hours_enabled"))
+        val BUDGET_ALERTS_ENABLED = booleanPreferencesKey(scoped("budget_alerts_enabled"))
+        val ACTIVITY_NOTIFS_ENABLED = booleanPreferencesKey(scoped("activity_notifs_enabled"))
+        val AUTO_BACKUP_3MIN = booleanPreferencesKey(scoped("auto_backup_3min_enabled"))
+        val LAST_AUTO_BACKUP_MILLIS = longPreferencesKey(scoped("last_auto_backup_millis"))
+        val PATTERN_LOCK_ENABLED = booleanPreferencesKey(scoped("pattern_lock_enabled"))
+        val PATTERN_LOCK_HASH = stringPreferencesKey(scoped("pattern_lock_hash"))
+        val PATTERN_LOCK_ON_RESUME = booleanPreferencesKey(scoped("pattern_lock_on_resume"))
+        val REPORT_ORG_NAME = stringPreferencesKey(scoped("report_org_name"))
+        val REPORT_ORG_ADDRESS = stringPreferencesKey(scoped("report_org_address"))
+        val REPORT_CONTACT_INFO = stringPreferencesKey(scoped("report_contact_info"))
+        val REPORT_FOOTER_TEXT = stringPreferencesKey(scoped("report_footer_text"))
+        val REPORT_SIGNATORY = stringPreferencesKey(scoped("report_signatory"))
+        val WHATSAPP_PHONE = stringPreferencesKey(scoped("whatsapp_phone"))
+        val WHATSAPP_AUTO_NOTIFY = booleanPreferencesKey(scoped("whatsapp_auto_notify"))
+        val GITHUB_UPDATE_REPO = stringPreferencesKey(scoped("github_update_repo"))
+        val LAST_UPDATE_CHECK_MILLIS = longPreferencesKey(scoped("last_update_check_millis"))
+        val SKIPPED_UPDATE_TAG = stringPreferencesKey(scoped("skipped_update_tag"))
     }
 
     val preferencesFlow: Flow<UserPreferencesState> = context.xynoosDataStore.data
@@ -94,45 +97,45 @@ class UserPreferencesRepository(private val context: Context) {
             }
         }
         .map { prefs ->
-        val themeStr = prefs[Keys.THEME_MODE] ?: AppThemeMode.DARK.name
-        val profileStr = prefs[Keys.PROFILE_TYPE] ?: FinancialProfileType.PERSONAL.name
+        val themeStr = prefs[keys.THEME_MODE] ?: AppThemeMode.DARK.name
+        val profileStr = prefs[keys.PROFILE_TYPE] ?: FinancialProfileType.PERSONAL.name
         UserPreferencesState(
             themeMode = runCatching { AppThemeMode.valueOf(themeStr) }.getOrDefault(AppThemeMode.DARK),
-            isPrivacyModeEnabled = prefs[Keys.PRIVACY_MODE] ?: false,
-            onboardingCompleted = prefs[Keys.ONBOARDING_COMPLETED] ?: false,
-            displayName = prefs[Keys.DISPLAY_NAME] ?: "",
-            currencyCode = prefs[Keys.CURRENCY_CODE] ?: "IDR",
+            isPrivacyModeEnabled = prefs[keys.PRIVACY_MODE] ?: false,
+            onboardingCompleted = prefs[keys.ONBOARDING_COMPLETED] ?: false,
+            displayName = prefs[keys.DISPLAY_NAME] ?: "",
+            currencyCode = prefs[keys.CURRENCY_CODE] ?: "IDR",
             financialProfileType = runCatching { FinancialProfileType.valueOf(profileStr) }.getOrDefault(FinancialProfileType.PERSONAL),
-            remindersEnabled = prefs[Keys.REMINDERS_ENABLED] ?: true,
-            reminderHour = prefs[Keys.REMINDER_HOUR] ?: 20,
-            reminderMinute = prefs[Keys.REMINDER_MINUTE] ?: 0,
-            quietHoursEnabled = prefs[Keys.QUIET_HOURS] ?: true,
-            budgetAlertsEnabled = prefs[Keys.BUDGET_ALERTS_ENABLED] ?: true,
-            activityNotificationsEnabled = prefs[Keys.ACTIVITY_NOTIFS_ENABLED] ?: true,
-            autoBackupEvery3MinEnabled = prefs[Keys.AUTO_BACKUP_3MIN] ?: true,
-            lastAutoBackupMillis = prefs[Keys.LAST_AUTO_BACKUP_MILLIS] ?: 0L,
-            patternLockEnabled = prefs[Keys.PATTERN_LOCK_ENABLED] ?: false,
-            patternLockHash = prefs[Keys.PATTERN_LOCK_HASH] ?: "",
-            patternLockOnResume = prefs[Keys.PATTERN_LOCK_ON_RESUME] ?: true,
-            reportOrgName = prefs[Keys.REPORT_ORG_NAME] ?: "Xynoos Private Wealth",
-            reportOrgAddress = prefs[Keys.REPORT_ORG_ADDRESS] ?: "Jakarta Selatan, DKI Jakarta, Indonesia",
-            reportContactInfo = prefs[Keys.REPORT_CONTACT_INFO] ?: "finance@xynoos.id",
-            reportFooterText = prefs[Keys.REPORT_FOOTER_TEXT] ?: "Dokumen rahasia — Dihasilkan secara deterministik oleh XynoosFinance",
-            reportSignatory = prefs[Keys.REPORT_SIGNATORY] ?: (prefs[Keys.DISPLAY_NAME] ?: ""),
-            whatsAppPhone = prefs[Keys.WHATSAPP_PHONE] ?: "",
-            whatsAppAutoNotifyOnTransaction = prefs[Keys.WHATSAPP_AUTO_NOTIFY] ?: false,
-            githubUpdateRepo = prefs[Keys.GITHUB_UPDATE_REPO] ?: "",
-            lastUpdateCheckMillis = prefs[Keys.LAST_UPDATE_CHECK_MILLIS] ?: 0L,
-            skippedUpdateTag = prefs[Keys.SKIPPED_UPDATE_TAG] ?: ""
+            remindersEnabled = prefs[keys.REMINDERS_ENABLED] ?: true,
+            reminderHour = prefs[keys.REMINDER_HOUR] ?: 20,
+            reminderMinute = prefs[keys.REMINDER_MINUTE] ?: 0,
+            quietHoursEnabled = prefs[keys.QUIET_HOURS] ?: true,
+            budgetAlertsEnabled = prefs[keys.BUDGET_ALERTS_ENABLED] ?: true,
+            activityNotificationsEnabled = prefs[keys.ACTIVITY_NOTIFS_ENABLED] ?: true,
+            autoBackupEvery3MinEnabled = prefs[keys.AUTO_BACKUP_3MIN] ?: true,
+            lastAutoBackupMillis = prefs[keys.LAST_AUTO_BACKUP_MILLIS] ?: 0L,
+            patternLockEnabled = prefs[keys.PATTERN_LOCK_ENABLED] ?: false,
+            patternLockHash = prefs[keys.PATTERN_LOCK_HASH] ?: "",
+            patternLockOnResume = prefs[keys.PATTERN_LOCK_ON_RESUME] ?: true,
+            reportOrgName = prefs[keys.REPORT_ORG_NAME] ?: "Xynoos Private Wealth",
+            reportOrgAddress = prefs[keys.REPORT_ORG_ADDRESS] ?: "Jakarta Selatan, DKI Jakarta, Indonesia",
+            reportContactInfo = prefs[keys.REPORT_CONTACT_INFO] ?: "finance@xynoos.id",
+            reportFooterText = prefs[keys.REPORT_FOOTER_TEXT] ?: "Dokumen rahasia — Dihasilkan secara deterministik oleh XynoosFinance",
+            reportSignatory = prefs[keys.REPORT_SIGNATORY] ?: (prefs[keys.DISPLAY_NAME] ?: ""),
+            whatsAppPhone = prefs[keys.WHATSAPP_PHONE] ?: "",
+            whatsAppAutoNotifyOnTransaction = prefs[keys.WHATSAPP_AUTO_NOTIFY] ?: false,
+            githubUpdateRepo = prefs[keys.GITHUB_UPDATE_REPO] ?: "",
+            lastUpdateCheckMillis = prefs[keys.LAST_UPDATE_CHECK_MILLIS] ?: 0L,
+            skippedUpdateTag = prefs[keys.SKIPPED_UPDATE_TAG] ?: ""
         )
     }
 
     suspend fun setThemeMode(mode: AppThemeMode) {
-        context.xynoosDataStore.edit { it[Keys.THEME_MODE] = mode.name }
+        context.xynoosDataStore.edit { it[keys.THEME_MODE] = mode.name }
     }
 
     suspend fun setPrivacyMode(enabled: Boolean) {
-        context.xynoosDataStore.edit { it[Keys.PRIVACY_MODE] = enabled }
+        context.xynoosDataStore.edit { it[keys.PRIVACY_MODE] = enabled }
     }
 
     suspend fun completeOnboarding(
@@ -143,14 +146,14 @@ class UserPreferencesRepository(private val context: Context) {
         themeMode: AppThemeMode
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.DISPLAY_NAME] = displayName.trim().ifEmpty { "Pengguna Xynoos" }
-            prefs[Keys.CURRENCY_CODE] = currencyCode
-            prefs[Keys.PROFILE_TYPE] = profileType.name
-            prefs[Keys.REMINDERS_ENABLED] = remindersEnabled
-            prefs[Keys.THEME_MODE] = themeMode.name
-            prefs[Keys.ONBOARDING_COMPLETED] = true
-            if (prefs[Keys.REPORT_SIGNATORY].isNullOrBlank()) {
-                prefs[Keys.REPORT_SIGNATORY] = displayName.trim()
+            prefs[keys.DISPLAY_NAME] = displayName.trim().ifEmpty { "Pengguna Xynoos" }
+            prefs[keys.CURRENCY_CODE] = currencyCode
+            prefs[keys.PROFILE_TYPE] = profileType.name
+            prefs[keys.REMINDERS_ENABLED] = remindersEnabled
+            prefs[keys.THEME_MODE] = themeMode.name
+            prefs[keys.ONBOARDING_COMPLETED] = true
+            if (prefs[keys.REPORT_SIGNATORY].isNullOrBlank()) {
+                prefs[keys.REPORT_SIGNATORY] = displayName.trim()
             }
         }
     }
@@ -161,9 +164,9 @@ class UserPreferencesRepository(private val context: Context) {
         currencyCode: String
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.DISPLAY_NAME] = displayName
-            prefs[Keys.PROFILE_TYPE] = profileType.name
-            prefs[Keys.CURRENCY_CODE] = currencyCode
+            prefs[keys.DISPLAY_NAME] = displayName
+            prefs[keys.PROFILE_TYPE] = profileType.name
+            prefs[keys.CURRENCY_CODE] = currencyCode
         }
     }
 
@@ -176,12 +179,12 @@ class UserPreferencesRepository(private val context: Context) {
         activityNotificationsEnabled: Boolean = true
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.REMINDERS_ENABLED] = enabled
-            prefs[Keys.REMINDER_HOUR] = hour
-            prefs[Keys.REMINDER_MINUTE] = minute
-            prefs[Keys.QUIET_HOURS] = quietHours
-            prefs[Keys.BUDGET_ALERTS_ENABLED] = budgetAlertsEnabled
-            prefs[Keys.ACTIVITY_NOTIFS_ENABLED] = activityNotificationsEnabled
+            prefs[keys.REMINDERS_ENABLED] = enabled
+            prefs[keys.REMINDER_HOUR] = hour
+            prefs[keys.REMINDER_MINUTE] = minute
+            prefs[keys.QUIET_HOURS] = quietHours
+            prefs[keys.BUDGET_ALERTS_ENABLED] = budgetAlertsEnabled
+            prefs[keys.ACTIVITY_NOTIFS_ENABLED] = activityNotificationsEnabled
         }
     }
 
@@ -190,16 +193,16 @@ class UserPreferencesRepository(private val context: Context) {
         lastBackupMillis: Long? = null
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.AUTO_BACKUP_3MIN] = enabled
+            prefs[keys.AUTO_BACKUP_3MIN] = enabled
             if (lastBackupMillis != null) {
-                prefs[Keys.LAST_AUTO_BACKUP_MILLIS] = lastBackupMillis
+                prefs[keys.LAST_AUTO_BACKUP_MILLIS] = lastBackupMillis
             }
         }
     }
 
     suspend fun recordAutoBackupTimestamp(timestampMillis: Long = System.currentTimeMillis()) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.LAST_AUTO_BACKUP_MILLIS] = timestampMillis
+            prefs[keys.LAST_AUTO_BACKUP_MILLIS] = timestampMillis
         }
     }
 
@@ -209,12 +212,12 @@ class UserPreferencesRepository(private val context: Context) {
         lockOnResume: Boolean? = null
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.PATTERN_LOCK_ENABLED] = enabled
+            prefs[keys.PATTERN_LOCK_ENABLED] = enabled
             if (patternHash != null) {
-                prefs[Keys.PATTERN_LOCK_HASH] = patternHash
+                prefs[keys.PATTERN_LOCK_HASH] = patternHash
             }
             if (lockOnResume != null) {
-                prefs[Keys.PATTERN_LOCK_ON_RESUME] = lockOnResume
+                prefs[keys.PATTERN_LOCK_ON_RESUME] = lockOnResume
             }
         }
     }
@@ -227,11 +230,11 @@ class UserPreferencesRepository(private val context: Context) {
         signatory: String
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.REPORT_ORG_NAME] = orgName
-            prefs[Keys.REPORT_ORG_ADDRESS] = orgAddress
-            prefs[Keys.REPORT_CONTACT_INFO] = contactInfo
-            prefs[Keys.REPORT_FOOTER_TEXT] = footerText
-            prefs[Keys.REPORT_SIGNATORY] = signatory
+            prefs[keys.REPORT_ORG_NAME] = orgName
+            prefs[keys.REPORT_ORG_ADDRESS] = orgAddress
+            prefs[keys.REPORT_CONTACT_INFO] = contactInfo
+            prefs[keys.REPORT_FOOTER_TEXT] = footerText
+            prefs[keys.REPORT_SIGNATORY] = signatory
         }
     }
 
@@ -240,26 +243,26 @@ class UserPreferencesRepository(private val context: Context) {
         autoNotify: Boolean
     ) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.WHATSAPP_PHONE] = phoneNumber.trim()
-            prefs[Keys.WHATSAPP_AUTO_NOTIFY] = autoNotify
+            prefs[keys.WHATSAPP_PHONE] = phoneNumber.trim()
+            prefs[keys.WHATSAPP_AUTO_NOTIFY] = autoNotify
         }
     }
 
     suspend fun updateGitHubRepoSlug(repoSlug: String) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.GITHUB_UPDATE_REPO] = repoSlug.trim().removePrefix("https://github.com/").trim('/')
+            prefs[keys.GITHUB_UPDATE_REPO] = repoSlug.trim().removePrefix("https://github.com/").trim('/')
         }
     }
 
     suspend fun recordUpdateCheck(timestampMillis: Long = System.currentTimeMillis()) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.LAST_UPDATE_CHECK_MILLIS] = timestampMillis
+            prefs[keys.LAST_UPDATE_CHECK_MILLIS] = timestampMillis
         }
     }
 
     suspend fun skipUpdateTag(tagName: String) {
         context.xynoosDataStore.edit { prefs ->
-            prefs[Keys.SKIPPED_UPDATE_TAG] = tagName.trim()
+            prefs[keys.SKIPPED_UPDATE_TAG] = tagName.trim()
         }
     }
 }
