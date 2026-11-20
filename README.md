@@ -97,9 +97,8 @@ Platform **XynoosFinance** oleh **Xynoos Technology** menyediakan dua cara mudah
 - Tambahkan satu dari secret berikut di GitHub: **Settings → Secrets and variables → Actions**:
   - `GOOGLE_SERVICES_JSON_BASE64`: isi base64 dari file `app/google-services.json` yang diunduh dari Firebase Console.
   - atau `GOOGLE_SERVICES_JSON`: isi JSON lengkap dari file `app/google-services.json`.
-- Pastikan file Firebase mengaktifkan **Google Sign-In** dan memiliki Android package:
-  `com.aistudio.xynoosfinance.xfnmkz`.
-- Secret bisa dibuat dengan:
+- Di Firebase Console, aktifkan provider **Google** dan daftarkan SHA-1 sertifikat yang menandatangani APK rilis untuk package `com.aistudio.xynoosfinance.xfnmkz`. Unduh ulang `google-services.json` setelah konfigurasi ini. Workflow memerlukan Web OAuth client (`client_type: 3`) untuk package tersebut dan memeriksa `default_web_client_id` di APK sebelum publikasi.
+- Untuk secret `GOOGLE_SERVICES_JSON_BASE64`, ubah file ke base64 dengan perintah berikut. Jika kedua secret tersedia, workflow menggunakan `GOOGLE_SERVICES_JSON_BASE64`.
   ```bash
   base64 -w0 app/google-services.json
   ```

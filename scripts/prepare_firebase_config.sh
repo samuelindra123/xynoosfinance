@@ -26,19 +26,29 @@ import json
 from pathlib import Path
 
 path = Path("app/google-services.json")
-data = json.loads(path.read_text(encoding="utf-8"))
-clients = data.get("client", [])
-package_names = {
-    android.get("package_name")
-    for client in clients
-    for android in [client.get("client_info", {}).get("android_client_info", {})]
-    if android.get("package_name")
-}
+try:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+except (UnicodeError, json.JSONDecodeError):
+    raise SystemExit("::error::GOOGLE_SERVICES_JSON must contain a valid Firebase Android JSON configuration.")
 
-if "com.aistudio.xynoosfinance.xfnmkz" not in package_names:
+package_name = "com.aistudio.xynoosfinance.xfnmkz"
+client = next((
+    item for item in data.get("client", [])
+    if item.get("client_info", {}).get("android_client_info", {}).get("package_name") == package_name
+), None) if isinstance(data, dict) else None
+if client is None:
+    raise SystemExit(f"::error::google-services.json does not contain package {package_name}.")
+
+web_client = next((
+    item for item in client.get("oauth_client", [])
+    if str(item.get("client_type")) == "3"
+), {})
+client_id = web_client.get("client_id")
+if not isinstance(client_id, str) or not client_id.endswith(".apps.googleusercontent.com"):
     raise SystemExit(
-        "::error::google-services.json does not contain package "
-        "com.aistudio.xynoosfinance.xfnmkz"
+        f"::error::Missing Web OAuth client (client_type 3) for {package_name}. "
+        "Enable Google in Firebase Authentication, register the APK signing SHA-1, "
+        "download a fresh google-services.json, and update the Actions secret used by this workflow."
     )
 PY
 

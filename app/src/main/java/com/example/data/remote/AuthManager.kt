@@ -8,6 +8,7 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
+import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -38,7 +39,7 @@ private fun ensureFirebaseAuth(context: Context): Result<FirebaseAuth> {
                 return Result.failure(
                     IllegalStateException(
                         "Konfigurasi Firebase (google_app_id / google-services.json) tidak ditemukan di APK ini. " +
-                            "Pastikan app/google-services.json ikut ter-commit ke repositori sebelum build APK."
+                            "Pastikan konfigurasi Firebase tersedia saat build APK."
                     )
                 )
             }
@@ -57,23 +58,8 @@ private fun ensureFirebaseAuth(context: Context): Result<FirebaseAuth> {
     }
 }
 
-private fun getDefaultWebClientId(context: Context): String? {
-    return try {
-        val resourceId = context.resources.getIdentifier(
-            "default_web_client_id",
-            "string",
-            context.packageName
-        )
-        if (resourceId == 0) {
-            null
-        } else {
-            context.getString(resourceId).takeIf { it.isNotBlank() }
-        }
-    } catch (t: Throwable) {
-        Log.w(TAG, "default_web_client_id tidak tersedia: ${t.message}")
-        null
-    }
-}
+private fun getDefaultWebClientId(context: Context): String? =
+    context.getString(R.string.default_web_client_id).takeIf { it.isNotBlank() }
 
 fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     val listener = FirebaseAuth.AuthStateListener { auth ->
