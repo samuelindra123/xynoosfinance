@@ -81,7 +81,18 @@ jobs:
 
       - name: Prepare Keystores for Debug & Release Signing
         shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          RELEASE_STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          RELEASE_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          PUBLISH_SIGNED_RELEASE: ${{ inputs.release_channel != 'debug-only' && (github.event_name != 'workflow_dispatch' || inputs.publish_github_release) }}
         run: |
+          if [[ "$PUBLISH_SIGNED_RELEASE" == true &&
+                ( -z "$RELEASE_KEYSTORE_BASE64" || -z "$RELEASE_STORE_PASSWORD" || -z "$RELEASE_KEY_PASSWORD" ) ]]; then
+            echo "::error::Publishing a release APK requires the persistent release key. Configure RELEASE_KEYSTORE_BASE64, STORE_PASSWORD, and KEY_PASSWORD."
+            exit 1
+          fi
+
           if [ -f "debug.keystore.base64" ]; then
             tr -d '\r\n' < debug.keystore.base64 | base64 -d > debug.keystore
           else
@@ -96,10 +107,9 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-          if [ -n "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.RELEASE_KEYSTORE_BASE64 }}" | tr -d '\r\n' | base64 -d > my-upload-key.jks
-            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
-            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" >> $GITHUB_ENV
+          if [ -n "$RELEASE_KEYSTORE_BASE64" ]; then
+            printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n' | base64 -d > my-upload-key.jks
+            printf 'STORE_PASSWORD=%s\nKEY_PASSWORD=%s\n' "$RELEASE_STORE_PASSWORD" "$RELEASE_KEY_PASSWORD" >> "$GITHUB_ENV"
           else
             keytool -importkeystore \
               -srckeystore debug.keystore \
