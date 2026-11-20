@@ -1446,9 +1446,15 @@ class XynoosViewModel(
                     _statusBannerMessage.value = "Sinkronisasi Cloud Firestore berhasil ($timeStr)."
                 }
             } else {
-                _lastSyncMessage.value = "Mode Lokal Aktif (Offline)"
+                _lastSyncMessage.value = "Sinkronisasi cloud belum selesai"
                 if (!silent) {
-                    _statusBannerMessage.value = "Data aman secara lokal. Sinkronisasi cloud akan dicoba kembali saat terhubung."
+                    _statusBannerMessage.value = when (
+                        (res.exceptionOrNull() as? com.google.firebase.firestore.FirebaseFirestoreException)?.code
+                    ) {
+                        com.google.firebase.firestore.FirebaseFirestoreException.Code.PERMISSION_DENIED ->
+                            "Akses Firestore ditolak. Periksa aturan database dan App Check."
+                        else -> "Sinkronisasi cloud belum selesai. Data lokal tetap tersimpan."
+                    }
                 }
             }
         }

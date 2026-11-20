@@ -68,7 +68,6 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.credentials.CredentialManager
-import com.example.data.remote.attemptAutoSignIn
 import com.example.data.remote.onGoogleSignInClicked
 import com.example.domain.AccountType
 import com.example.domain.AppThemeMode
@@ -123,16 +122,6 @@ fun WelcomeAuthScreen(
     val credentialManager = remember { runCatching { CredentialManager.create(context) }.getOrNull() }
     var isLoading by remember { mutableStateOf(false) }
     var authError by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(Unit) {
-        attemptAutoSignIn(
-            context = context,
-            credentialManager = credentialManager,
-            onAuthSuccess = onAuthSuccess,
-            onUnauthenticated = {},
-            scope = scope
-        )
-    }
 
     Box(
         modifier = Modifier
@@ -301,6 +290,7 @@ fun OnboardingWizardScreen(
     initialDisplayName: String,
     currentThemeMode: AppThemeMode,
     onThemeChanged: (AppThemeMode) -> Unit,
+    onSwitchAccount: () -> Unit,
     onCompleteOnboarding: (
         displayName: String,
         currencyCode: String,
@@ -381,6 +371,8 @@ fun OnboardingWizardScreen(
                     Text("Lewati ke Dashboard")
                 }
             }
+
+            TextButton(onClick = onSwitchAccount) { Text("Ganti akun Google") }
 
             Spacer(modifier = Modifier.height(8.dp))
             LinearProgressIndicator(

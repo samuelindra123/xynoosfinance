@@ -9,7 +9,6 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import com.example.R
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.Companion.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
@@ -67,60 +66,6 @@ fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
     }
     addAuthStateListener(listener)
     awaitClose { removeAuthStateListener(listener) }
-}
-
-/**
- * Silent Auto-Sign-In on startup using GetGoogleIdOption in its own single-option request.
- */
-fun attemptAutoSignIn(
-    context: Context,
-    credentialManager: CredentialManager?,
-    onAuthSuccess: () -> Unit,
-    onUnauthenticated: () -> Unit,
-    scope: CoroutineScope
-) {
-    val firebaseAuth = ensureFirebaseAuth(context).getOrNull()
-    if (firebaseAuth?.currentUser != null) {
-        onAuthSuccess()
-        return
-    }
-    if (credentialManager == null || firebaseAuth == null) {
-        onUnauthenticated()
-        return
-    }
-    val clientId = getDefaultWebClientId(context) ?: run {
-        onUnauthenticated()
-        return
-    }
-
-    val googleIdOption = GetGoogleIdOption.Builder()
-        .setFilterByAuthorizedAccounts(true)
-        .setServerClientId(clientId)
-        .setAutoSelectEnabled(true)
-        .build()
-
-    // One option per request for Android 16 (API 36) bottom sheet responsiveness
-    val request = GetCredentialRequest.Builder().addCredentialOption(googleIdOption).build()
-
-    scope.launch {
-        try {
-            val activityContext = context as? Activity ?: context
-            val result = credentialManager.getCredential(activityContext, request)
-            val credential = result.credential
-            if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
-                val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
-                firebaseAuth.signInWithCredential(authCredential).await()
-                onAuthSuccess()
-            } else {
-                onUnauthenticated()
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (_: Throwable) {
-            onUnauthenticated()
-        }
-    }
 }
 
 /**

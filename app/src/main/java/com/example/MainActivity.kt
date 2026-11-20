@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Savings
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -37,12 +38,15 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.key
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -53,6 +57,9 @@ import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -91,10 +98,12 @@ import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.auth
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class PrimaryNavDestination(
     val route: String,
@@ -202,9 +211,43 @@ fun XynoosRootApplication(
         return
     }
 
+    key(activeUid) {
+        val accountPrefsRepo = remember {
+            if (forceAuthenticatedUserIdForTest != null) prefsRepo
+            else UserPreferencesRepository(appCtx, activeUid)
+        }
+        val accountPrefs by accountPrefsRepo.preferencesFlow.collectAsStateWithLifecycle(
+            initialValue = null
+        )
+        val activePrefs = if (forceAuthenticatedUserIdForTest != null) prefsState else accountPrefs
+        if (activePrefs != null) {
+            XynoosFinanceTheme(themeMode = activePrefs.themeMode) {
+                XynoosAccountSession(
+                    activeUid = activeUid,
+                    currentUserEmail = currentUserEmail,
+                    currentUserDisplayName = currentUserDisplayName,
+                    prefsRepo = accountPrefsRepo,
+                    prefsState = activePrefs,
+                    isTestSession = forceAuthenticatedUserIdForTest != null
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun XynoosAccountSession(
+    activeUid: String,
+    currentUserEmail: String?,
+    currentUserDisplayName: String,
+    prefsRepo: UserPreferencesRepository,
+    prefsState: UserPreferencesState,
+    isTestSession: Boolean
+) {
+    val context = LocalContext.current
     var isPatternUnlocked by rememberSaveable(activeUid) {
         mutableStateOf(
-            forceAuthenticatedUserIdForTest != null ||
+            isTestSession ||
                 !prefsState.patternLockEnabled ||
                 prefsState.patternLockHash.isBlank()
         )
@@ -212,10 +255,10 @@ fun XynoosRootApplication(
 
     // Re-lock app when returning from background if pattern lock & lock-on-resume are active
     val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner, prefsState.patternLockEnabled, prefsState.patternLockHash, prefsState.patternLockOnResume, forceAuthenticatedUserIdForTest) {
+    DisposableEffect(lifecycleOwner, prefsState.patternLockEnabled, prefsState.patternLockHash, prefsState.patternLockOnResume, isTestSession) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP &&
-                forceAuthenticatedUserIdForTest == null &&
+                !isTestSession &&
                 prefsState.patternLockEnabled &&
                 prefsState.patternLockHash.isNotBlank() &&
                 prefsState.patternLockOnResume
@@ -235,13 +278,20 @@ fun XynoosRootApplication(
 
     val safeUiExceptionHandler = remember { CoroutineExceptionHandler { _, _ -> } }
 
+    val sessionScope = rememberCoroutineScope()
+    var signingOut by remember { mutableStateOf(false) }
     val performSignOut: () -> Unit = {
-        CoroutineScope(Dispatchers.Main + safeUiExceptionHandler).launch {
-            runCatching {
-                CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+        if (!signingOut) {
+            signingOut = true
+            sessionScope.launch {
+                try {
+                    runCatching {
+                        CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+                    }
+                } finally {
+                    if (Firebase.auth.currentUser?.uid == activeUid) Firebase.auth.signOut()
+                }
             }
-            runCatching { Firebase.auth.signOut() }
-            currentUserId = null
         }
     }
 
@@ -266,29 +316,67 @@ fun XynoosRootApplication(
         return
     }
 
-    val viewModel = remember(activeUid) {
-        val db = XynoosDatabase.getInstance(context.applicationContext)
-        val cloudRepo = runCatching { FirestoreFinanceRepository(context.applicationContext) }.getOrNull()
-        val offlineFirstRepo = OfflineFirstFinanceRepository(
-            dao = db.financeDao(),
-            cloudRepo = cloudRepo,
-            userId = activeUid
-        )
-        XynoosViewModel(
-            repository = offlineFirstRepo,
-            cloudRepo = cloudRepo,
-            prefsRepo = prefsRepo,
-            currentUserId = activeUid,
-            userEmail = currentUserEmail,
-            appContext = context.applicationContext
-        )
+    val appContext = context.applicationContext
+    val dao = remember { XynoosDatabase.getInstance(appContext).financeDao() }
+    val cloudRepo = remember {
+        runCatching { FirestoreFinanceRepository(appContext, activeUid) }.getOrNull()
+    }
+    var checkingProfile by remember { mutableStateOf(!isTestSession && !prefsState.onboardingCompleted) }
+    LaunchedEffect(Unit) {
+        if (checkingProfile) {
+            try {
+                val profile = withTimeoutOrNull(5_000L) {
+                    try {
+                        cloudRepo?.fetchCompletedProfile()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                if (profile != null || dao.getAccounts(activeUid).isNotEmpty()) {
+                    prefsRepo.completeOnboarding(
+                        displayName = profile?.displayName ?: currentUserDisplayName,
+                        currencyCode = profile?.currencyCode ?: prefsState.currencyCode,
+                        profileType = profile?.type ?: prefsState.financialProfileType,
+                        remindersEnabled = prefsState.remindersEnabled,
+                        themeMode = prefsState.themeMode
+                    )
+                }
+            } finally {
+                checkingProfile = false
+            }
+        }
+    }
+    val viewModelStore = remember { ViewModelStore() }
+    DisposableEffect(viewModelStore) {
+        onDispose { viewModelStore.clear() }
+    }
+    val viewModel = remember(viewModelStore) {
+        val factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T = XynoosViewModel(
+                repository = OfflineFirstFinanceRepository(dao, cloudRepo, activeUid),
+                cloudRepo = cloudRepo,
+                prefsRepo = prefsRepo,
+                currentUserId = activeUid,
+                userEmail = currentUserEmail,
+                appContext = appContext
+            ) as T
+        }
+        ViewModelProvider(viewModelStore, factory)[XynoosViewModel::class.java]
     }
 
-    if (!prefsState.onboardingCompleted) {
+    if (checkingProfile) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+    } else if (!prefsState.onboardingCompleted) {
         OnboardingWizardScreen(
             initialDisplayName = currentUserDisplayName.ifBlank { prefsState.displayName },
             currentThemeMode = prefsState.themeMode,
             onThemeChanged = { viewModel.setThemeMode(it) },
+            onSwitchAccount = performSignOut,
             onCompleteOnboarding = { name, currency, profileType, accName, accType, openingBal, goalName, goalTarget, reminders, theme ->
                 viewModel.completeOnboardingWizard(
                     displayName = name,

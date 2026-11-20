@@ -24,23 +24,13 @@ class DailyReminderReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val prefs = UserPreferencesRepository(appContext).preferencesFlow.first()
+                val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull() ?: return@launch
+                val prefs = UserPreferencesRepository(appContext, uid).preferencesFlow.first()
                 if (!prefs.remindersEnabled) return@launch
 
                 // Respect quiet hours (22:00 - 06:00) if enabled
                 val hourNow = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
                 if (prefs.quietHoursEnabled && (hourNow >= 22 || hourNow < 6)) {
-                    return@launch
-                }
-
-                val uid = runCatching { Firebase.auth.currentUser?.uid }.getOrNull()
-                if (uid.isNullOrBlank()) {
-                    ReminderNotificationHelper.sendDailyScheduledReminder(
-                        context = appContext,
-                        availableCashIdr = 0L,
-                        todayTxCount = 0,
-                        isPrivacyMode = true
-                    )
                     return@launch
                 }
 
@@ -62,6 +52,7 @@ class DailyReminderReceiver : BroadcastReceiver() {
                     goals = emptyList()
                 ).availableCashIdr
 
+                if (Firebase.auth.currentUser?.uid != uid) return@launch
                 ReminderNotificationHelper.sendDailyScheduledReminder(
                     context = appContext,
                     availableCashIdr = cashAvailable,

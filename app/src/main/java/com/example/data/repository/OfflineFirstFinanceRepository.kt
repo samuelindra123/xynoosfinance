@@ -366,48 +366,64 @@ class OfflineFirstFinanceRepository(
         val remote = cloudRepo ?: return Result.failure(IllegalStateException("Cloud repository not configured"))
         return try {
             var pushedCount = 0
+            var uploadFailure: Throwable? = null
 
             val pendingAccounts = dao.getUnsyncedAccounts(userId).map { it.toDomain() }
             for (acc in pendingAccounts) {
-                if (remote.syncAccount(acc).isSuccess) {
+                val result = remote.syncAccount(acc)
+                if (result.isSuccess) {
                     dao.upsertAccount(acc.copy(syncStatus = SyncStatus.SYNCED).toEntity())
                     pushedCount++
+                } else if (uploadFailure == null) {
+                    uploadFailure = result.exceptionOrNull()
                 }
             }
 
             val pendingTxs = dao.getUnsyncedTransactions(userId).map { it.toDomain() }
             for (tx in pendingTxs) {
-                if (remote.syncTransaction(tx).isSuccess) {
+                val result = remote.syncTransaction(tx)
+                if (result.isSuccess) {
                     dao.upsertTransaction(tx.copy(syncStatus = SyncStatus.SYNCED).toEntity())
                     pushedCount++
+                } else if (uploadFailure == null) {
+                    uploadFailure = result.exceptionOrNull()
                 }
             }
 
             val pendingBudgets = dao.getUnsyncedBudgets(userId).map { it.toDomain() }
             for (bdg in pendingBudgets) {
-                if (remote.syncBudget(bdg).isSuccess) {
+                val result = remote.syncBudget(bdg)
+                if (result.isSuccess) {
                     dao.upsertBudget(bdg.copy(syncStatus = SyncStatus.SYNCED).toEntity())
                     pushedCount++
+                } else if (uploadFailure == null) {
+                    uploadFailure = result.exceptionOrNull()
                 }
             }
 
             val pendingGoals = dao.getUnsyncedGoals(userId).map { it.toDomain() }
             for (goal in pendingGoals) {
-                if (remote.syncGoal(goal).isSuccess) {
+                val result = remote.syncGoal(goal)
+                if (result.isSuccess) {
                     dao.upsertGoal(goal.copy(syncStatus = SyncStatus.SYNCED).toEntity())
                     pushedCount++
+                } else if (uploadFailure == null) {
+                    uploadFailure = result.exceptionOrNull()
                 }
             }
 
             val pendingInvoices = dao.getUnsyncedInvoices(userId).map { it.toDomain() }
             for (inv in pendingInvoices) {
-                if (remote.syncInvoice(inv).isSuccess) {
+                val result = remote.syncInvoice(inv)
+                if (result.isSuccess) {
                     dao.upsertInvoice(inv.copy(syncStatus = SyncStatus.SYNCED).toEntity())
                     pushedCount++
+                } else if (uploadFailure == null) {
+                    uploadFailure = result.exceptionOrNull()
                 }
             }
 
-            Result.success(pushedCount)
+            uploadFailure?.let { Result.failure(it) } ?: Result.success(pushedCount)
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {
@@ -422,25 +438,27 @@ class OfflineFirstFinanceRepository(
     suspend fun synchronizeWithCloud(): Result<Int> {
         val remote = cloudRepo ?: return Result.failure(IllegalStateException("Cloud repository not configured"))
         return try {
-            var syncedCount = backupPendingChangesIncremental().getOrDefault(0)
+            val backupResult = backupPendingChangesIncremental()
+            var syncedCount = backupResult.getOrDefault(0)
+            var uploadFailure = backupResult.exceptionOrNull()
 
             // Sync custom user categories
             val defaultIds = DefaultCategories.getDefaults(userId).map { it.id }.toSet()
             val customLocalCats = dao.getCategories(userId).map { it.toDomain() }.filter { it.id !in defaultIds }
             for (cat in customLocalCats) {
-                if (remote.syncCategory(cat).isSuccess) syncedCount++
+                val result = remote.syncCategory(cat)
+                if (result.isSuccess) syncedCount++
+                else if (uploadFailure == null) uploadFailure = result.exceptionOrNull()
             }
 
             // Pull cloud transactions and resolve conflicts by version
-            val remoteTxsResult = remote.fetchTransactions()
-            if (remoteTxsResult.isSuccess) {
-                val localById = dao.getTransactions(userId).associateBy { it.id }
-                for (remoteTx in remoteTxsResult.getOrDefault(emptyList())) {
-                    val existingLocal = localById[remoteTx.id]
-                    if (existingLocal == null || remoteTx.version >= existingLocal.version) {
-                        dao.upsertTransaction(remoteTx.toEntity())
-                        syncedCount++
-                    }
+            for (remoteTx in remote.fetchTransactions().getOrThrow()) {
+                val existingLocal = dao.getTransactionById(remoteTx.id, userId)
+                if (existingLocal == null || remoteTx.version > existingLocal.version ||
+                    (remoteTx.version == existingLocal.version && existingLocal.syncStatus == SyncStatus.SYNCED.name)
+                ) {
+                    dao.upsertTransaction(remoteTx.toEntity())
+                    syncedCount++
                 }
             }
 
@@ -492,7 +510,7 @@ class OfflineFirstFinanceRepository(
             }
 
             recalculateAndPersistAccountBalances()
-            Result.success(syncedCount)
+            uploadFailure?.let { Result.failure(it) } ?: Result.success(syncedCount)
         } catch (e: CancellationException) {
             throw e
         } catch (t: Throwable) {

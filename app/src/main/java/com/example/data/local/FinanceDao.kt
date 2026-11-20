@@ -264,7 +264,7 @@ interface FinanceDao {
         AiSessionEntity::class,
         AiMessageEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class XynoosDatabase : RoomDatabase() {
@@ -327,6 +327,36 @@ abstract class XynoosDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                val userTables = listOf(
+                    "accounts", "categories", "transactions", "budgets", "goals",
+                    "goal_contributions", "recurring_transactions", "invoices", "ai_sessions", "ai_messages"
+                )
+                for (table in userTables) {
+                    val definitions = db.query(
+                        "SELECT type, sql FROM sqlite_master WHERE tbl_name = ? AND sql IS NOT NULL",
+                        arrayOf(table)
+                    ).use { cursor ->
+                        buildList {
+                            while (cursor.moveToNext()) add(cursor.getString(0) to cursor.getString(1))
+                        }
+                    }
+                    val oldSchema = definitions.single { it.first == "table" }.second
+                    val oldPrimaryKey = Regex("""PRIMARY KEY\s*\(\s*`id`\s*\)""", RegexOption.IGNORE_CASE)
+                    val newSchema = oldSchema.replace(oldPrimaryKey, "PRIMARY KEY(`userId`, `id`)")
+                    check(newSchema != oldSchema) { "Unexpected primary key in $table" }
+                    db.execSQL("ALTER TABLE `$table` RENAME TO `old_$table`")
+                    db.execSQL(newSchema)
+                    db.execSQL("INSERT INTO `$table` SELECT * FROM `old_$table`")
+                    db.execSQL("DROP TABLE `old_$table`")
+                    for ((type, sql) in definitions) {
+                        if (type == "index") db.execSQL(sql)
+                    }
+                }
+            }
+        }
+
         fun getInstance(context: Context): XynoosDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -334,7 +364,7 @@ abstract class XynoosDatabase : RoomDatabase() {
                     XynoosDatabase::class.java,
                     "xynoos_finance.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }

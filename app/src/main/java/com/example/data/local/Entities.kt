@@ -2,7 +2,6 @@ package com.example.data.local
 
 import androidx.room.Entity
 import androidx.room.Index
-import androidx.room.PrimaryKey
 import com.example.domain.AccountType
 import com.example.domain.AiMessageModel
 import com.example.domain.AiSessionModel
@@ -25,10 +24,11 @@ import com.example.domain.TransactionType
 
 @Entity(
     tableName = "accounts",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId"])]
 )
 data class AccountEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val name: String,
     val accountType: String,
@@ -77,10 +77,11 @@ fun FinancialAccountModel.toEntity() = AccountEntity(
 
 @Entity(
     tableName = "categories",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId"])]
 )
 data class CategoryEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val name: String,
     val type: String,
@@ -117,6 +118,7 @@ fun TransactionCategoryModel.toEntity() = CategoryEntity(
 
 @Entity(
     tableName = "transactions",
+    primaryKeys = ["userId", "id"],
     indices = [
         Index(value = ["userId", "transactionDateMillis"]),
         Index(value = ["accountId"]),
@@ -124,7 +126,7 @@ fun TransactionCategoryModel.toEntity() = CategoryEntity(
     ]
 )
 data class TransactionEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val type: String,
     val amountIdr: Long,
@@ -200,10 +202,11 @@ fun TransactionModel.toEntity() = TransactionEntity(
 
 @Entity(
     tableName = "budgets",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId", "periodYearMonth"])]
 )
 data class BudgetEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val name: String,
     val categoryId: String,
@@ -249,10 +252,11 @@ fun BudgetModel.toEntity() = BudgetEntity(
 
 @Entity(
     tableName = "goals",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId"])]
 )
 data class GoalEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val name: String,
     val targetAmountIdr: Long,
@@ -307,10 +311,11 @@ fun FinancialGoalModel.toEntity() = GoalEntity(
 
 @Entity(
     tableName = "goal_contributions",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId", "goalId"])]
 )
 data class GoalContributionEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val goalId: String,
     val amountIdr: Long,
@@ -341,10 +346,11 @@ fun GoalContributionModel.toEntity() = GoalContributionEntity(
 
 @Entity(
     tableName = "recurring_transactions",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId"])]
 )
 data class RecurringTransactionEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val title: String,
     val type: String,
@@ -390,10 +396,11 @@ fun RecurringTransactionModel.toEntity() = RecurringTransactionEntity(
 
 @Entity(
     tableName = "invoices",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId"])]
 )
 data class InvoiceEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val invoiceNumber: String,
     val counterpartyName: String,
@@ -439,10 +446,11 @@ fun InvoiceReferenceModel.toEntity() = InvoiceEntity(
 
 @Entity(
     tableName = "ai_sessions",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId", "updatedAtMillis"])]
 )
 data class AiSessionEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val userId: String,
     val title: String,
     val createdAtMillis: Long,
@@ -473,10 +481,11 @@ fun AiSessionModel.toEntity() = AiSessionEntity(
 
 @Entity(
     tableName = "ai_messages",
+    primaryKeys = ["userId", "id"],
     indices = [Index(value = ["userId", "sessionId", "timestampMillis"])]
 )
 data class AiMessageEntity(
-    @PrimaryKey val id: String,
+    val id: String,
     val sessionId: String,
     val userId: String,
     val role: String,

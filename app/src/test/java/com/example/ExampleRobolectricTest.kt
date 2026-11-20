@@ -431,6 +431,7 @@ class ExampleRobolectricTest {
                     initialDisplayName = "Budi",
                     currentThemeMode = com.example.domain.AppThemeMode.DARK,
                     onThemeChanged = {},
+                    onSwitchAccount = {},
                     onCompleteOnboarding = { _, _, _, _, _, _, _, _, _, _ -> }
                 )
             }

@@ -6,6 +6,7 @@ import com.example.domain.TransactionType
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -66,6 +67,7 @@ class FirestoreFinanceRepositoryRuleTest : FirestoreEmulatorTestBase() {
         withTimeout(DEFAULT_TIMEOUT_MS) { aliceRepo.syncTransaction(tx).getOrThrow() }
 
         signInTestUser(BOB_EMAIL)
+        assertTrue(aliceRepo.syncTransaction(tx).isFailure)
         val bobRepo = FirestoreFinanceRepository(firestore, auth)
         try {
             withTimeout(DEFAULT_TIMEOUT_MS) {
@@ -78,12 +80,13 @@ class FirestoreFinanceRepositoryRuleTest : FirestoreEmulatorTestBase() {
     }
 
     @Test
-    fun observeTransactions_unauthenticatedUser_failsWithPermissionDenied() = runBlocking {
+    fun listTransactions_unauthenticatedUser_failsWithPermissionDenied() = runBlocking {
         auth.signOut()
-        val repository = FirestoreFinanceRepository(firestore, auth)
         try {
             withTimeout(FLOW_TIMEOUT_MS) {
-                repository.observeTransactions("alice_unauth_test").first()
+                firestore.collection("users").document("alice_unauth_test")
+                    .collection("transactions").whereEqualTo("userId", "alice_unauth_test")
+                    .get(com.google.firebase.firestore.Source.SERVER).await()
             }
             fail("Expected FirebaseFirestoreException PERMISSION_DENIED for unauthenticated caller")
         } catch (e: FirebaseFirestoreException) {
