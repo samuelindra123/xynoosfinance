@@ -1,0 +1,29 @@
+name: Android build check
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - '.github/workflows/android-check.yml'
+permissions:
+  contents: read
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+      - name: Provide placeholder Firebase configuration for compilation
+        run: |
+          cat > app/google-services.json <<'JSON'
+          {"project_info":{"project_number":"123456789012","project_id":"placeholder-project","storage_bucket":"placeholder-project.appspot.com"},"client":[{"client_info":{"mobilesdk_app_id":"1:123456789012:android:1234567890abcdef","android_client_info":{"package_name":"com.aistudio.xynoosfinance.xfnmkz"}},"oauth_client":[],"api_key":[{"current_key":"placeholder-api-key"}]}],"configuration_version":"1"}
+          JSON
+      - run: gradle :app:compileDebugKotlin --no-daemon
