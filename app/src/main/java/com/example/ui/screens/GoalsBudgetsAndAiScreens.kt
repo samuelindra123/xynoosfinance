@@ -157,7 +157,7 @@ fun GoalsAndBudgetsScreen(
                     1 -> "Anggaran Cerdas"
                     else -> "Rekap Bulanan & Tahunan"
                 },
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.weight(1f)
             )
@@ -166,7 +166,7 @@ fun GoalsAndBudgetsScreen(
                     onClick = onOpenDedicatedAnalyticsPage,
                     modifier = Modifier.testTag("open_full_analytics_page_button")
                 ) {
-                    Text("Layar Penuh")
+                    Text("Buka")
                 }
             } else {
                 Button(
@@ -177,7 +177,7 @@ fun GoalsAndBudgetsScreen(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (selectedSubTab == 0) "Target Baru" else "Anggaran Baru")
+                    Text("Tambah")
                 }
             }
         }

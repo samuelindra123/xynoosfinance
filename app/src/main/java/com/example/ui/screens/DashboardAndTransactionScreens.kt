@@ -74,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -107,6 +108,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun HomeDashboardScreen(
     uiState: XynoosUiState,
@@ -123,13 +125,14 @@ fun HomeDashboardScreen(
 ) {
     val overview = uiState.overview
     val isPrivacy = uiState.prefs.isPrivacyModeEnabled
+    val compactScreen = LocalConfiguration.current.screenWidthDp < 400
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .testTag("home_dashboard_screen"),
-        contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(start = if (compactScreen) 16.dp else 20.dp, end = if (compactScreen) 16.dp else 20.dp, top = 16.dp, bottom = 96.dp),
+        verticalArrangement = Arrangement.spacedBy(if (compactScreen) 12.dp else 16.dp)
     ) {
         // 1. Top Header with Greeting, Sync Status & Privacy Toggle
         item {
@@ -232,7 +235,8 @@ fun HomeDashboardScreen(
                             text = "TOTAL KAS TERSEDIA (LIKUID)",
                             style = MaterialTheme.typography.labelSmall,
                             color = EmeraldPrimary,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
                         )
                         Text(
                             text = uiState.lastSyncMessage,
@@ -262,7 +266,7 @@ fun HomeDashboardScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column {
+                        Column(modifier = Modifier.weight(1f)) {
                             Text("Kekayaan Bersih (Net Worth)", style = MaterialTheme.typography.labelSmall, color = Color(0xFF98A3B3))
                             Text(
                                 text = IdrFormatter.format(overview.netWorthIdr, isPrivacyHidden = isPrivacy),
@@ -275,7 +279,7 @@ fun HomeDashboardScreen(
                                 color = Color(0xFF98A3B3)
                             )
                         }
-                        Column(horizontalAlignment = Alignment.End) {
+                        Column(modifier = Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                             Text("Total Aset / Kewajiban", style = MaterialTheme.typography.labelSmall, color = Color(0xFF98A3B3))
                             Text(
                                 text = "${IdrFormatter.formatCompact(overview.totalAssetsIdr, isPrivacy)} / ${IdrFormatter.formatCompact(overview.totalLiabilitiesIdr, isPrivacy)}",
@@ -296,9 +300,11 @@ fun HomeDashboardScreen(
         // 4. Quick Actions Row
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    maxItemsInEachRow = if (compactScreen) 2 else 4,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     QuickActionButton(
                         label = "Pemasukan",
@@ -332,12 +338,12 @@ fun HomeDashboardScreen(
 
                 // Secondary Executive Quick Strip: Live USD Chart, Export Status PNG, Free WhatsApp Notif
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
                         onClick = onOpenUsdMarketTerminal,
-                        modifier = Modifier.weight(1f).testTag("quick_open_usd_terminal_button"),
+                        modifier = Modifier.testTag("quick_open_usd_terminal_button"),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                     ) {
@@ -345,7 +351,7 @@ fun HomeDashboardScreen(
                     }
                     OutlinedButton(
                         onClick = onQuickExportStatusImage,
-                        modifier = Modifier.weight(1f).testTag("quick_export_status_png_button"),
+                        modifier = Modifier.testTag("quick_export_status_png_button"),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                     ) {
@@ -353,7 +359,7 @@ fun HomeDashboardScreen(
                     }
                     OutlinedButton(
                         onClick = onSendWhatsAppQuick,
-                        modifier = Modifier.weight(1f).testTag("quick_whatsapp_notif_button"),
+                        modifier = Modifier.testTag("quick_whatsapp_notif_button"),
                         shape = RoundedCornerShape(12.dp),
                         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                     ) {
@@ -688,8 +694,9 @@ fun TransactionsScreen(
         ) {
             Text(
                 text = "Buku Besar Transaksi",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f)
             )
             Row {
                 IconButton(onClick = onToggleSort, modifier = Modifier.testTag("sort_transactions_button")) {
