@@ -104,6 +104,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 
 enum class PrimaryNavDestination(
     val route: String,
@@ -415,6 +416,10 @@ fun XynoosAuthenticatedWorkspace(
     var inspectingTransaction by remember { mutableStateOf<TransactionModel?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
+    val updateScope = rememberCoroutineScope()
+    var updateDownloadProgress by remember { mutableStateOf<Int?>(null) }
+    var downloadedUpdatePath by rememberSaveable { mutableStateOf("") }
+    var updateDownloadError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(uiState.statusBannerMessage) {
         val msg = uiState.statusBannerMessage
@@ -768,13 +773,45 @@ fun XynoosAuthenticatedWorkspace(
     }
 
     val pendingUpdate = uiState.availableUpdate
+    LaunchedEffect(pendingUpdate?.tagName) {
+        updateDownloadProgress = null
+        downloadedUpdatePath = ""
+        updateDownloadError = null
+    }
     if (pendingUpdate != null) {
         AppUpdatePromptDialog(
             updateInfo = pendingUpdate,
             currentVersionLabel = "v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})",
             isChecking = uiState.isCheckingUpdate,
+            downloadProgressPercent = updateDownloadProgress,
+            downloadedReady = downloadedUpdatePath.isNotBlank() && File(downloadedUpdatePath).isFile,
+            downloadError = updateDownloadError,
             onUpdateNow = {
-                GitHubUpdateChecker.openUpdateDownload(context, pendingUpdate)
+                updateDownloadError = null
+                if (downloadedUpdatePath.isNotBlank() && File(downloadedUpdatePath).isFile) {
+                    val installed = GitHubUpdateChecker.installDownloadedApk(context, File(downloadedUpdatePath))
+                    if (!installed) {
+                        updateDownloadError = "Izinkan XynoosFinance memasang aplikasi dari sumber ini. Setelah kembali ke app, tekan Pasang Pembaruan lagi."
+                    }
+                } else if (updateDownloadProgress == null) {
+                    updateScope.launch {
+                        try {
+                            updateDownloadProgress = -1
+                            val apk = GitHubUpdateChecker.downloadReleaseApk(context, pendingUpdate) {
+                                updateDownloadProgress = it
+                            }
+                            downloadedUpdatePath = apk.absolutePath
+                            updateDownloadProgress = null
+                            val installed = GitHubUpdateChecker.installDownloadedApk(context, apk)
+                            if (!installed) {
+                                updateDownloadError = "Izinkan XynoosFinance memasang aplikasi dari sumber ini. Setelah kembali ke app, tekan Pasang Pembaruan lagi."
+                            }
+                        } catch (error: Exception) {
+                            updateDownloadProgress = null
+                            updateDownloadError = error.localizedMessage ?: "Gagal mengunduh pembaruan."
+                        }
+                    }
+                }
             },
             onRecheck = {
                 viewModel.checkForAppUpdate(manual = true)
