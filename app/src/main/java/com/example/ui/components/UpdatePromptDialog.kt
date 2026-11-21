@@ -25,6 +25,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
@@ -56,6 +57,9 @@ fun AppUpdatePromptDialog(
     updateInfo: AppUpdateInfo,
     currentVersionLabel: String,
     isChecking: Boolean,
+    downloadProgressPercent: Int?,
+    downloadedReady: Boolean,
+    downloadError: String?,
     onUpdateNow: () -> Unit,
     onRecheck: () -> Unit,
     onRemindLater: () -> Unit,
@@ -185,13 +189,39 @@ fun AppUpdatePromptDialog(
                 }
 
                 Text(
-                    text = "Menekan tombol di bawah langsung mengunduh file APK resmi dari GitHub Releases. Setelah selesai, ketuk file untuk memperbarui aplikasi tanpa menghapus data.",
+                    text = when {
+                        downloadProgressPercent != null -> "APK diunduh langsung di dalam aplikasi."
+                        downloadedReady -> "APK siap dipasang. Android akan meminta konfirmasi sebelum memperbarui aplikasi."
+                        else -> "APK resmi diunduh dari GitHub. Browser tidak perlu dibuka."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = WarmAmber
                 )
 
+                if (downloadProgressPercent != null) {
+                    if (downloadProgressPercent >= 0) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgressPercent.coerceIn(0, 100) / 100f },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text("Mengunduh APK… $downloadProgressPercent%", style = MaterialTheme.typography.labelSmall)
+                    } else {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Mengunduh APK…", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+
+                if (!downloadError.isNullOrBlank()) {
+                    Text(
+                        text = downloadError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = RefinedRed
+                    )
+                }
+
                 Button(
                     onClick = onUpdateNow,
+                    enabled = downloadProgressPercent == null,
                     colors = ButtonDefaults.buttonColors(
                         containerColor = accent,
                         contentColor = if (updateInfo.isMandatory) Color.White else Color(0xFF081018)
@@ -204,7 +234,14 @@ fun AppUpdatePromptDialog(
                 ) {
                     Icon(Icons.Default.CloudDownload, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Update Sekarang (${updateInfo.tagName})", fontWeight = FontWeight.Bold)
+                    Text(
+                        text = when {
+                            downloadProgressPercent != null -> "Sedang Mengunduh…"
+                            downloadedReady -> "Pasang Pembaruan"
+                            else -> "Unduh & Pasang (${updateInfo.tagName})"
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
                 }
 
                 if (updateInfo.isMandatory) {
