@@ -171,7 +171,7 @@ service cloud.firestore {
 
       // Subcollection 2: /users/{userId}/accounts/{accountId}
       match /accounts/{accountId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(accountId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -196,7 +196,7 @@ service cloud.firestore {
 
       // Subcollection 3: /users/{userId}/transactions/{transactionId}
       match /transactions/{transactionId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(transactionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(transactionId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -221,7 +221,7 @@ service cloud.firestore {
 
       // Subcollection 4: /users/{userId}/categories/{categoryId}
       match /categories/{categoryId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(categoryId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(categoryId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -246,7 +246,7 @@ service cloud.firestore {
 
       // Subcollection 5: /users/{userId}/budgets/{budgetId}
       match /budgets/{budgetId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(budgetId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -271,7 +271,7 @@ service cloud.firestore {
 
       // Subcollection 6: /users/{userId}/goals/{goalId}
       match /goals/{goalId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(goalId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(goalId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -296,7 +296,7 @@ service cloud.firestore {
 
       // Subcollection 7: /users/{userId}/goal_contributions/{contributionId}
       match /goal_contributions/{contributionId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(contributionId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(contributionId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
@@ -321,7 +321,7 @@ service cloud.firestore {
 
       // Subcollection 8: /users/{userId}/invoices/{invoiceId}
       match /invoices/{invoiceId} {
-        allow get: if isSignedIn() && isValidId(userId) && isValidId(invoiceId) && request.auth.uid == userId && existing().userId == request.auth.uid;
+        allow get: if isSignedIn() && isValidId(userId) && isValidId(invoiceId) && request.auth.uid == userId;
         allow list: if isSignedIn() && request.auth.uid == userId && existing().userId == request.auth.uid;
 
         allow create: if isSignedIn() &&
