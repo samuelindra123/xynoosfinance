@@ -3,10 +3,14 @@ package com.example.data.remote
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -34,8 +38,7 @@ sealed class GitHubUpdateCheckResult {
 /**
  * Checks the latest published release on GitHub Releases (`GET /repos/{owner}/{repo}/releases/latest`),
  * parses structured `XYNOOS_META` tags and SemVer tags, detects whether the release is marked
- * as mandatory ("Wajib Update"), and opens the official release/APK URL via Intent.ACTION_VIEW
- * (Google Play policy compliant, requiring zero REQUEST_INSTALL_PACKAGES permissions).
+ * as mandatory ("Wajib Update"), downloads APK assets in-app, and starts Android's package installer.
  */
 object GitHubUpdateChecker {
 
@@ -232,17 +235,113 @@ object GitHubUpdateChecker {
         return (major * 10000) + (minor * 100) + patch
     }
 
-    fun openUpdateDownload(context: Context, updateInfo: AppUpdateInfo): Boolean {
-        val targetUrl = updateInfo.apkDownloadUrl.ifBlank { updateInfo.releasePageUrl }
-        if (targetUrl.isBlank()) return false
-        return try {
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl)).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    suspend fun downloadReleaseApk(
+        context: Context,
+        updateInfo: AppUpdateInfo,
+        onProgress: (Int) -> Unit
+    ): File = withContext(Dispatchers.IO) {
+        val targetUrl = updateInfo.apkDownloadUrl
+        val parsedUrl = runCatching { URL(targetUrl) }.getOrElse {
+            throw IllegalArgumentException("Tautan APK rilis tidak valid.")
+        }
+        require(parsedUrl.protocol == "https" && parsedUrl.host == "github.com" &&
+            parsedUrl.path.endsWith(".apk", ignoreCase = true)
+        ) {
+            "Rilis GitHub belum menyediakan file APK resmi untuk diunduh."
+        }
+
+        val connection = (parsedUrl.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = true
+            setRequestProperty("Accept", "application/octet-stream")
+            setRequestProperty("User-Agent", "XynoosFinance-Android-Updater")
+        }
+        try {
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw IllegalStateException("Unduhan APK gagal (HTTP $responseCode).")
             }
-            context.startActivity(intent)
+            val totalBytes = connection.contentLengthLong
+            require(totalBytes <= MAX_APK_BYTES) {
+                "Ukuran APK melebihi batas aman unduhan."
+            }
+
+            val updateDirectory = File(context.cacheDir, "updates").apply { mkdirs() }
+            val safeVersionName = updateInfo.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            val targetFile = File(updateDirectory, "xynoosfinance-$safeVersionName.apk")
+            val temporaryFile = File(updateDirectory, "xynoosfinance-$safeVersionName.apk.part")
+            var downloadedBytes = 0L
+            var lastReportedAt = 0L
+            connection.inputStream.use { input ->
+                FileOutputStream(temporaryFile).use { output ->
+                    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        downloadedBytes += count
+                        require(downloadedBytes <= MAX_APK_BYTES) {
+                            "Ukuran APK melebihi batas aman unduhan."
+                        }
+                        output.write(buffer, 0, count)
+                        val now = System.currentTimeMillis()
+                        if (now - lastReportedAt >= 250L) {
+                            val percent = if (totalBytes > 0) {
+                                ((downloadedBytes * 100) / totalBytes).toInt().coerceIn(0, 100)
+                            } else {
+                                -1
+                            }
+                            withContext(Dispatchers.Main) { onProgress(percent) }
+                            lastReportedAt = now
+                        }
+                    }
+                    output.fd.sync()
+                }
+            }
+            require(downloadedBytes > 0L) { "File APK yang diunduh kosong." }
+            if (targetFile.exists()) targetFile.delete()
+            check(temporaryFile.renameTo(targetFile)) { "Gagal menyiapkan APK untuk dipasang." }
+            withContext(Dispatchers.Main) { onProgress(100) }
+            targetFile
+        } catch (error: Throwable) {
+            val safeVersionName = updateInfo.versionName.replace(Regex("[^A-Za-z0-9._-]"), "_")
+            File(context.cacheDir, "updates/xynoosfinance-$safeVersionName.apk.part").delete()
+            throw error
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    fun installDownloadedApk(context: Context, apkFile: File): Boolean {
+        if (!apkFile.isFile) return false
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            val permissionIntent = Intent(
+                android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")
+            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+            context.startActivity(permissionIntent)
+            return false
+        }
+
+        return try {
+            val apkUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
+            val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                setDataAndType(apkUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(installIntent)
             true
         } catch (_: Exception) {
             false
         }
     }
+
+    private const val MAX_APK_BYTES = 150L * 1024L * 1024L
 }
